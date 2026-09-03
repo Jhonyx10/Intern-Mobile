@@ -1,0 +1,118 @@
+src/pages/Index.tsx(22,26): error TS2307: Cannot find module '../api/client' or its corresponding type declarations.
+src/pages/Index.tsx(23,23): error TS2307: Cannot find module '../api/auth' or its corresponding type declarations.
+src/pages/Index.tsx(29,8): error TS2307: Cannot find module '../config/api.environment' or its corresponding type declarations.
+src/pages/Index.tsx(30,29): error TS2307: Cannot find module '../components/OccLogoMark' or its corresponding type declarations.
+src/pages/Index.tsx(31,36): error TS2307: Cannot find module '../types/auth' or its corresponding type declarations.
+src/pages/Index.tsx(124,21): error TS18046: 'error' is of type 'unknown'.
+src/pages/Index.tsx(125,21): error TS18046: 'error' is of type 'unknown'.
+src/pages/Index.tsx(126,21): error TS18046: 'error' is of type 'unknown'.
+src/pages/Index.tsx(140,13): error TS2322: Type '{ children: Element; className: string; style: { paddingBottom: number; }; }' is not assignable to type 'IntrinsicAttributes & Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+  Property 'className' does not exist on type 'IntrinsicAttributes & Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+src/pages/Index.tsx(144,17): error TS2322: Type '{ children: (Element | null)[]; className: string; onPress: () => void; accessible: false; }' is not assignable to type 'IntrinsicAttributes & Omit<PressableProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+  Property 'className' does not exist on type 'IntrinsicAttributes & Omit<PressableProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+src/pages/Index.tsx(151,25): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(props: Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & { ...; }): ReactNode', gave the following error.
+    Type '{ children: Element[]; entering: FadeInDown; className: string; style: { paddingTop: number; }; }' is not assignable to type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & { ...; }'.
+      Property 'className' does not exist on type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & { ...; }'.
+  Overload 2 of 2, '(props: Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & RefAttributes<...>): ReactNode', gave the following error.
+    Type '{ children: Element[]; entering: FadeInDown; className: string; style: { paddingTop: number; }; }' is not assignable to type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & RefAttributes<...>'.
+      Property 'className' does not exist on type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & RefAttributes<...>'.
+src/pages/Index.tsx(156,31): error TS2322: Type '{ children: Element; className: string; }' is not assignable to type 'IntrinsicAttributes & Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+  Property 'className' does not exist on type 'IntrinsicAttributes & Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+src/pages/Index.tsx(159,31): error TS2322: Type '{ children: string; className: string; }' is not assignable to type 'IntrinsicAttributes & Omit<TextProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+  Property 'className' does not exist on type 'IntrinsicAttributes & Omit<TextProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+src/pages/Index.tsx(162,31): error TS2322: Type '{ children: string; className: string; }' is not assignable to type 'IntrinsicAttributes & Omit<TextProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+  Property 'className' does not exist on type 'IntrinsicAttributes & Omit<TextProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+src/pages/Index.tsx(170,21): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(props: Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & { ...; }): ReactNode', gave the following error.
+    Type '{ children: (Element | null)[]; layout: LinearTransition; className: string; }' is not assignable to type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & { ...; }'.
+      Property 'className' does not exist on type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & { ...; }'.
+  Overload 2 of 2, '(props: Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & RefAttributes<...>): ReactNode', gave the following error.
+    Type '{ children: (Element | null)[]; layout: LinearTransition; className: string; }' is not assignable to type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & RefAttributes<...>'.
+      Property 'className' does not exist on type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & RefAttributes<...>'.
+src/pages/Index.tsx(179,25): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(props: Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & { ...; }): ReactNode', gave the following error.
+    Type '{ children: (Element | null)[]; entering: FadeInUp; layout: LinearTransition; className: string; }' is not assignable to type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & { ...; }'.
+      Property 'className' does not exist on type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & { ...; }'.
+  Overload 2 of 2, '(props: Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & RefAttributes<...>): ReactNode', gave the following error.
+    Type '{ children: (Element | null)[]; entering: FadeInUp; layout: LinearTransition; className: string; }' is not assignable to type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & RefAttributes<...>'.
+      Property 'className' does not exist on type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & RefAttributes<...>'.
+src/pages/Index.tsx(184,29): error TS2322: Type '{ children: (Element | null)[]; className: string; }' is not assignable to type 'IntrinsicAttributes & Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+  Property 'className' does not exist on type 'IntrinsicAttributes & Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+src/pages/Index.tsx(190,35): error TS2322: Type '{ children: string; className: string; }' is not assignable to type 'IntrinsicAttributes & Omit<TextProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+  Property 'className' does not exist on type 'IntrinsicAttributes & Omit<TextProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+src/pages/Index.tsx(194,39): error TS2322: Type '{ children: string; className: string; }' is not assignable to type 'IntrinsicAttributes & Omit<TextProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+  Property 'className' does not exist on type 'IntrinsicAttributes & Omit<TextProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+src/pages/Index.tsx(203,29): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(props: Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & { ...; }): ReactNode', gave the following error.
+    Type '{ children: Element[]; entering: FadeIn; className: string; }' is not assignable to type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & { ...; }'.
+      Property 'className' does not exist on type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & { ...; }'.
+  Overload 2 of 2, '(props: Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & RefAttributes<...>): ReactNode', gave the following error.
+    Type '{ children: Element[]; entering: FadeIn; className: string; }' is not assignable to type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & RefAttributes<...>'.
+      Property 'className' does not exist on type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & RefAttributes<...>'.
+src/pages/Index.tsx(205,35): error TS2322: Type '{ children: string; className: string; }' is not assignable to type 'IntrinsicAttributes & Omit<TextProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+  Property 'className' does not exist on type 'IntrinsicAttributes & Omit<TextProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+src/pages/Index.tsx(217,58): error TS2339: Property 'focus' does not exist on type 'TextInputType'.
+src/pages/Index.tsx(223,33): error TS2322: Type '{ value: string; onChangeText: Dispatch<SetStateAction<string>>; autoCapitalize: "none"; autoCorrect: false; textContentType: "username"; returnKeyType: "next"; ... 7 more ...; editable: boolean; }' is not assignable to type 'IntrinsicAttributes & Omit<TextInputProps, "ref"> & { ref?: Ref<_TextInputInstance> | undefined; }'.
+  Property 'className' does not exist on type 'IntrinsicAttributes & Omit<TextInputProps, "ref"> & { ref?: Ref<_TextInputInstance> | undefined; }'.
+src/pages/Index.tsx(238,29): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(props: Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & { ...; }): ReactNode', gave the following error.
+    Type '{ children: Element[]; entering: FadeIn; className: string; }' is not assignable to type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & { ...; }'.
+      Property 'className' does not exist on type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & { ...; }'.
+  Overload 2 of 2, '(props: Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & RefAttributes<...>): ReactNode', gave the following error.
+    Type '{ children: Element[]; entering: FadeIn; className: string; }' is not assignable to type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & RefAttributes<...>'.
+      Property 'className' does not exist on type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & RefAttributes<...>'.
+src/pages/Index.tsx(240,35): error TS2322: Type '{ children: string; className: string; }' is not assignable to type 'IntrinsicAttributes & Omit<TextProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+  Property 'className' does not exist on type 'IntrinsicAttributes & Omit<TextProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+src/pages/Index.tsx(244,33): error TS2322: Type '{ children: Element[]; className: string; }' is not assignable to type 'IntrinsicAttributes & Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+  Property 'className' does not exist on type 'IntrinsicAttributes & Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+src/pages/Index.tsx(251,37): error TS2322: Type 'RefObject<TextInputType | null>' is not assignable to type 'Ref<_TextInputInstance> | undefined'.
+  Type 'RefObject<TextInputType | null>' is not assignable to type 'RefObject<_TextInputInstance | null>'.
+    Type 'TextInputType | null' is not assignable to type '_TextInputInstance | null'.
+      Type 'TextInputType' is not assignable to type '_TextInputInstance | null'.
+src/pages/Index.tsx(273,37): error TS2322: Type '{ children: Element; onPress: () => void; className: string; hitSlop: number; }' is not assignable to type 'IntrinsicAttributes & Omit<PressableProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+  Property 'className' does not exist on type 'IntrinsicAttributes & Omit<PressableProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+src/pages/Index.tsx(276,43): error TS2322: Type '{ children: string; className: string; }' is not assignable to type 'IntrinsicAttributes & Omit<TextProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+  Property 'className' does not exist on type 'IntrinsicAttributes & Omit<TextProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+src/pages/Index.tsx(286,33): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(props: Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & { ...; }): ReactNode', gave the following error.
+    Type '{ children: Element; entering: FadeIn; className: string; }' is not assignable to type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & { ...; }'.
+      Property 'className' does not exist on type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & { ...; }'.
+  Overload 2 of 2, '(props: Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & RefAttributes<...>): ReactNode', gave the following error.
+    Type '{ children: Element; entering: FadeIn; className: string; }' is not assignable to type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & RefAttributes<...>'.
+      Property 'className' does not exist on type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & RefAttributes<...>'.
+src/pages/Index.tsx(288,39): error TS2322: Type '{ children: string; className: string; }' is not assignable to type 'IntrinsicAttributes & Omit<TextProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+  Property 'className' does not exist on type 'IntrinsicAttributes & Omit<TextProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+src/pages/Index.tsx(308,29): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(props: Omit<AnimatedProps<Readonly<Omit<PressableProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & { ...; }): ReactNode', gave the following error.
+    Type '{ children: Element; onPress: () => Promise<void>; onPressIn: () => void; onPressOut: () => void; disabled: boolean; style: AnimatedStyleHandle<{ transform: { scale: number; }[]; }>; className: string; }' is not assignable to type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<PressableProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & { ...; }'.
+      Property 'className' does not exist on type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<PressableProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & { ...; }'.
+  Overload 2 of 2, '(props: Omit<AnimatedProps<Readonly<Omit<PressableProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & RefAttributes<...>): ReactNode', gave the following error.
+    Type '{ children: Element; onPress: () => Promise<void>; onPressIn: () => void; onPressOut: () => void; disabled: boolean; style: AnimatedStyleHandle<{ transform: { scale: number; }[]; }>; className: string; }' is not assignable to type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<PressableProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & RefAttributes<...>'.
+      Property 'className' does not exist on type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<PressableProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & RefAttributes<...>'.
+src/pages/Index.tsx(315,39): error TS2322: Type '{ children: string; className: string; }' is not assignable to type 'IntrinsicAttributes & Omit<TextProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+  Property 'className' does not exist on type 'IntrinsicAttributes & Omit<TextProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+src/pages/Index.tsx(324,33): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(props: Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & { ...; }): ReactNode', gave the following error.
+    Type '{ children: Element; entering: FadeIn; className: string; }' is not assignable to type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & { ...; }'.
+      Property 'className' does not exist on type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & { ...; }'.
+  Overload 2 of 2, '(props: Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & RefAttributes<...>): ReactNode', gave the following error.
+    Type '{ children: Element; entering: FadeIn; className: string; }' is not assignable to type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & RefAttributes<...>'.
+      Property 'className' does not exist on type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & RefAttributes<...>'.
+src/pages/Index.tsx(326,39): error TS2322: Type '{ children: Element[]; className: string; }' is not assignable to type 'IntrinsicAttributes & Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+  Property 'className' does not exist on type 'IntrinsicAttributes & Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+src/pages/Index.tsx(341,49): error TS2322: Type '{ children: Element; key: "local" | "production"; onPress: () => void; className: string; }' is not assignable to type 'IntrinsicAttributes & Omit<PressableProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+  Property 'className' does not exist on type 'IntrinsicAttributes & Omit<PressableProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+src/pages/Index.tsx(348,53): error TS2322: Type '{ children: string; className: string; }' is not assignable to type 'IntrinsicAttributes & Omit<TextProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+  Property 'className' does not exist on type 'IntrinsicAttributes & Omit<TextProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+src/pages/Index.tsx(369,29): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(props: Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & { ...; }): ReactNode', gave the following error.
+    Type '{ children: Element[]; entering: FadeIn; className: string; }' is not assignable to type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & { ...; }'.
+      Property 'className' does not exist on type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & { ...; }'.
+  Overload 2 of 2, '(props: Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & RefAttributes<...>): ReactNode', gave the following error.
+    Type '{ children: Element[]; entering: FadeIn; className: string; }' is not assignable to type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & RefAttributes<...>'.
+      Property 'className' does not exist on type 'IntrinsicAttributes & Omit<AnimatedProps<Readonly<Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }>>, "ref"> & Partial<...> & object & RefAttributes<...>'.
+src/pages/Index.tsx(371,35): error TS2322: Type '{ children: string; className: string; }' is not assignable to type 'IntrinsicAttributes & Omit<TextProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+  Property 'className' does not exist on type 'IntrinsicAttributes & Omit<TextProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+src/pages/Index.tsx(374,35): error TS2322: Type '{ children: string; className: string; }' is not assignable to type 'IntrinsicAttributes & Omit<TextProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+  Property 'className' does not exist on type 'IntrinsicAttributes & Omit<TextProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.

@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { api } from '../api';
 
 interface DashboardSchedule {
@@ -46,11 +46,27 @@ export interface DashboardData {
     progress: DashboardProgress;
 }
 
+export interface CompanyRequestPayload {
+    name: string;
+    address: string;
+    latitude?: number | null;
+    longitude?: number | null;
+}
+
 export const useDashboard = () => {
     return useQuery({
         queryKey: ['dashboard'],
         queryFn: async () => {
             const { data } = await api.get<DashboardData>('/intern/progress');
+            return data;
+        },
+    });
+};
+
+export const useRequestCompany = () => {
+    return useMutation({
+        mutationFn: async (payload: CompanyRequestPayload) => {
+            const { data } = await api.post('/intern/company/request', payload);
             return data;
         },
     });

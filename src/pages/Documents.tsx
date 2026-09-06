@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
-import { View, Text, Pressable, ScrollView, Modal, ActivityIndicator, Alert, StyleSheet } from 'react-native';
+import { View, Text, Pressable, ScrollView, Modal, ActivityIndicator, Alert, StyleSheet, Platform } from 'react-native';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import LinearGradient from 'react-native-linear-gradient';
 import { CheckCircle2, FileText, UploadCloud, X, File, AlertCircle } from 'lucide-react-native';
-import DocumentPicker, { types } from 'react-native-document-picker';
+import { pick, types } from '@react-native-documents/picker';
 import Pdf from 'react-native-pdf';
 import { useUser } from '../util/queries/auth';
+import { useUploadDocument, useDocuments, downloadDocumentFile } from '../util/queries/documents';
 
 function withAlpha(hex: string, alpha: string) {
     return `${hex}${alpha}`;
@@ -17,13 +18,6 @@ export type DocumentItem = {
     status: 'pending' | 'uploaded' | 'approved' | 'rejected';
     uri?: string;
 };
-
-const initialDocs: DocumentItem[] = [
-    { id: '1', title: 'Resume (CV)', status: 'approved', uri: 'https://pdfobject.com/pdf/sample.pdf' }, // Mock URI for layout test
-    { id: '2', title: 'Medical Certificate', status: 'pending' },
-    { id: '3', title: 'Internship Waiver', status: 'pending' },
-    { id: '4', title: 'Endorsement Letter', status: 'uploaded', uri: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf' },
-];
 
 function StatusBadge({ status }: { status: DocumentItem['status'] }) {
     const badges = {
@@ -46,32 +40,90 @@ function StatusBadge({ status }: { status: DocumentItem['status'] }) {
 export const Documents = () => {
     const { data: userData } = useUser();
     const themeColor = userData?.settings?.theme_color || '#1D4ED8';
-    const [docs, setDocs] = useState<DocumentItem[]>(initialDocs);
+
+    const { data: fetchedDocs } = useDocuments();
+    const docs: DocumentItem[] = fetchedDocs || [];
+
     const [selectedDoc, setSelectedDoc] = useState<DocumentItem | null>(null);
+    const [localPdfPath, setLocalPdfPath] = useState<string | null>(null);
+    const [isLoadingPdf, setIsLoadingPdf] = useState<boolean>(false);
     const [isUploading, setIsUploading] = useState<string | null>(null);
+    const uploadDocMutation = useUploadDocument();
+
+    // Custom Feedback Modal state
+    const [modalConfig, setModalConfig] = useState<{
+        visible: boolean;
+        type: 'success' | 'error';
+        title: string;
+        message: string;
+    }>({
+        visible: false,
+        type: 'success',
+        title: '',
+        message: '',
+    });
+
+    const showFeedback = (type: 'success' | 'error', title: string, message: string) => {
+        setModalConfig({
+            visible: true,
+            type,
+            title,
+            message,
+        });
+    };
+
+    const handleViewDoc = async (doc: DocumentItem) => {
+        setSelectedDoc(doc);
+        setLocalPdfPath(null);
+
+        if (!doc.uri) return;
+
+        // If it's already a local file scheme, use directly
+        if (doc.uri.startsWith('file://')) {
+            setLocalPdfPath(doc.uri);
+            return;
+        }
+
+        try {
+            setIsLoadingPdf(true);
+            const cachedPath = await downloadDocumentFile(doc.id);
+            setLocalPdfPath(cachedPath);
+        } catch (err: any) {
+            console.log('Failed to download PDF:', err);
+            showFeedback('error', 'Download Error', 'Failed to cache PDF for preview: ' + (err?.response?.data?.message || err?.message || err));
+        } finally {
+            setIsLoadingPdf(false);
+        }
+    };
 
     const handleUpload = async (id: string) => {
         try {
             setIsUploading(id);
-            const res = await DocumentPicker.pickSingle({
-                presentationStyle: 'fullScreen',
+
+            // pick() always returns an array of files. Destructure the first item.
+            const [res] = await pick({
+                mode: 'import',
                 type: [types.pdf],
+                allowMultiSelection: false,
             });
 
-            if (res.uri) {
-                // Simulate an upload delay
-                setTimeout(() => {
-                    setDocs((prev) => prev.map(d => d.id === id ? { ...d, status: 'uploaded', uri: res.uri } : d));
-                    Alert.alert('Success', 'Document uploaded successfully and is under review.');
+            if (res?.uri) {
+                try {
+                    await uploadDocMutation.mutateAsync({ documentId: id, file: res });
                     setIsUploading(null);
-                }, 1200);
+                    showFeedback('success', 'Upload Successful!', 'Your document has been submitted successfully and is now pending review.');
+                } catch (uploadErr: any) {
+                    setIsUploading(null);
+                    showFeedback('error', 'Upload Failed', uploadErr?.response?.data?.message || uploadErr?.message || 'Failed to upload document to server.');
+                }
             } else {
                 setIsUploading(null);
             }
-        } catch (err) {
+        } catch (err: any) {
             setIsUploading(null);
-            if (!DocumentPicker.isCancel(err)) {
-                Alert.alert('Error', 'An unknown error occurred while selecting the file.');
+            // Check if the user cancelled the picker dialog
+            if (err?.code !== 'OPERATION_CANCELED' && !err?.message?.includes('cancel')) {
+                showFeedback('error', 'Selection Error', err?.message || 'An unknown error occurred while selecting the file.');
             }
         }
     };
@@ -92,7 +144,7 @@ export const Documents = () => {
                 </Animated.View>
 
                 <View className="px-5" style={{ marginTop: -28 }}>
-                    {docs.map((doc, index) => (
+                    {docs.map((doc: DocumentItem, index: number) => (
                         <Animated.View
                             key={doc.id}
                             entering={FadeInUp.duration(500).delay(index * 100 + 150).springify()}
@@ -122,7 +174,7 @@ export const Documents = () => {
                                         <Text className="ml-1.5 font-bold text-[12px]" style={{ color: themeColor }}>Upload</Text>
                                     </Pressable>
                                 ) : (
-                                    <Pressable onPress={() => setSelectedDoc(doc)} className="flex-row items-center px-4 py-2.5 rounded-xl shadow-sm" style={{ backgroundColor: themeColor }}>
+                                    <Pressable onPress={() => handleViewDoc(doc)} className="flex-row items-center px-4 py-2.5 rounded-xl shadow-sm" style={{ backgroundColor: themeColor }}>
                                         <File color="#fff" size={15} strokeWidth={2} />
                                         <Text className="ml-1.5 text-white font-bold text-[12px]">View</Text>
                                     </Pressable>
@@ -146,21 +198,21 @@ export const Documents = () => {
                     </View>
 
                     <View className="flex-1 bg-slate-100">
-                        {selectedDoc?.uri ? (
+                        {isLoadingPdf ? (
+                            <View className="flex-1 items-center justify-center">
+                                <ActivityIndicator size="large" color={themeColor} />
+                                <Text className="mt-4 text-slate-500 font-medium">Downloading document preview...</Text>
+                            </View>
+                        ) : localPdfPath ? (
                             <Pdf
-                                source={{ uri: selectedDoc.uri, cache: true }}
+                                source={{ uri: localPdfPath }}
                                 style={styles.pdf}
-                                onLoadComplete={(numberOfPages, filePath) => {
+                                onLoadComplete={(numberOfPages) => {
                                     console.log(`Number of pages: ${numberOfPages}`);
                                 }}
-                                onPageChanged={(page, numberOfPages) => {
-                                    console.log(`Current page: ${page}`);
-                                }}
-                                onError={(error) => {
-                                    console.log(error);
-                                }}
-                                onPressLink={(uri) => {
-                                    console.log(`Link pressed: ${uri}`);
+                                onError={(error: any) => {
+                                    console.log('PDF Error:', error);
+                                    Alert.alert('Preview Error', `Could not render cached PDF: ` + (error?.message || error));
                                 }}
                             />
                         ) : (
@@ -170,6 +222,40 @@ export const Documents = () => {
                             </View>
                         )}
                     </View>
+                </View>
+            </Modal>
+
+            {/* Custom Feedback Modal (Success / Error) */}
+            <Modal
+                visible={modalConfig.visible}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setModalConfig(prev => ({ ...prev, visible: false }))}
+            >
+                <View className="flex-1 bg-black/50 items-center justify-center px-6">
+                    <Animated.View entering={FadeInUp.duration(300).springify()} className="bg-white rounded-3xl p-6 w-full max-w-sm items-center shadow-xl">
+                        <View
+                            className="h-16 w-16 rounded-full items-center justify-center mb-4"
+                            style={{ backgroundColor: modalConfig.type === 'success' ? '#DCFCE7' : '#FEE2E2' }}
+                        >
+                            {modalConfig.type === 'success' ? (
+                                <CheckCircle2 color="#16A34A" size={36} strokeWidth={2.5} />
+                            ) : (
+                                <AlertCircle color="#DC2626" size={36} strokeWidth={2.5} />
+                            )}
+                        </View>
+
+                        <Text className="text-xl font-bold text-slate-800 text-center mb-2">{modalConfig.title}</Text>
+                        <Text className="text-sm text-slate-500 text-center mb-6 leading-5">{modalConfig.message}</Text>
+
+                        <Pressable
+                            onPress={() => setModalConfig(prev => ({ ...prev, visible: false }))}
+                            className="w-full py-3.5 rounded-2xl items-center shadow-sm"
+                            style={{ backgroundColor: modalConfig.type === 'success' ? themeColor : '#DC2626' }}
+                        >
+                            <Text className="text-white font-bold text-base">Continue</Text>
+                        </Pressable>
+                    </Animated.View>
                 </View>
             </Modal>
         </>

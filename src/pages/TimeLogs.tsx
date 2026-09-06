@@ -17,6 +17,7 @@ import {
     usePhotoOutput,
 } from 'react-native-vision-camera';
 import { useFaceDetectorOutput } from 'react-native-vision-camera-face-detector';
+import Geolocation from '@react-native-community/geolocation';
 import {
     ScanFace,
     CheckCircle2,
@@ -29,7 +30,6 @@ import {
     LogIn,
     LogOut,
     Sunrise,
-    Sunset,
 } from 'lucide-react-native';
 import LinearGradient from 'react-native-linear-gradient';
 import { useTimeStatus, useEnrollFace, useTimePunch } from '../util/queries/timelog';
@@ -158,7 +158,7 @@ function FaceEnrollModal({
                     <View className="flex-1 items-center justify-center">
                         <ScanFace color="#fff" size={64} />
                         <Text className="text-white mt-4 text-center px-8">
-                            Camera permission is required to enroll your face.
+                            Camera permission is required.
                         </Text>
                         <Pressable
                             onPress={requestPermission}
@@ -224,38 +224,6 @@ function FaceEnrollModal({
     );
 }
 
-function isTimeReached(timeStr: string): boolean {
-    const [h, m] = timeStr.split(':').map(Number);
-    const now = new Date();
-    return now.getHours() > h || (now.getHours() === h && now.getMinutes() >= m);
-}
-
-function checkPunchInAllowed(scheduleTimeInStr: string): { allowed: boolean, hint: string } {
-    if (!scheduleTimeInStr) return { allowed: true, hint: '' };
-    const match = scheduleTimeInStr.match(/(\d+):(\d+)\s+(AM|PM)/i);
-    if (!match) return { allowed: true, hint: '' };
-
-    let [_, h, m, ampm] = match;
-    let hours = parseInt(h, 10);
-    const mins = parseInt(m, 10);
-
-    if (ampm?.toUpperCase() === 'PM' && hours < 12) hours += 12;
-    if (ampm?.toUpperCase() === 'AM' && hours === 12) hours = 0;
-
-    const scheduledTime = new Date();
-    scheduledTime.setHours(hours, mins, 0, 0);
-
-    const allowedTime = new Date(scheduledTime.getTime() - 10 * 60000);
-    const now = new Date();
-
-    if (now < allowedTime) {
-        const timeStr = allowedTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        return { allowed: false, hint: `Available from ${timeStr}` };
-    }
-
-    return { allowed: true, hint: 'Tap to punch in' };
-}
-
 function formatLogTime(isoString?: string | null) {
     if (!isoString) return '--:--';
     return new Date(isoString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -316,15 +284,31 @@ export default function TimeLogs() {
         }
     };
 
-    const handlePunch = async (imageUri: string, action: 'time_in' | 'time_out' | 'break_out' | 'break_in') => {
+    const handlePunch = async (imageUri: string | null, action: 'time_in' | 'time_out' | 'break_out' | 'break_in') => {
         try {
-            const res = await timePunch({ action, image: imageUri });
-            setCameraMode(null);
-            const msg = action === 'time_in' ? 'Punched in successfully! 👋' : 'Punched out. See you tomorrow! 🎉';
-            Alert.alert('Done', res?.message ?? msg);
+            // Fetch current device position to satisfy TimePunchPayload
+            Geolocation.getCurrentPosition(
+                async (position) => {
+                    const { latitude, longitude } = position.coords;
+
+                    const res = await timePunch({
+                        action,
+                        image: imageUri,
+                        latitude,
+                        longitude,
+                    });
+
+                    setCameraMode(null);
+                    Alert.alert('Done', res?.message ?? 'Action completed successfully!');
+                },
+                (error) => {
+                    Alert.alert('Location Error', 'Unable to retrieve your current location for geofencing.');
+                },
+                { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
+            );
         } catch (e: any) {
             const msg = e?.response?.data?.message ?? 'Something went wrong. Please try again.';
-            Alert.alert('Punch Failed', msg);
+            Alert.alert('Action Failed', msg);
         }
     };
 
@@ -356,9 +340,6 @@ export default function TimeLogs() {
     }
 
     const punchPhase = getPunchPhase(status);
-    const punchOutReady = status.can_punch_out;
-
-    const punchInGuard = checkPunchInAllowed(dashboard?.progress?.schedule?.time_in || status.today_attendance?.schedule_label?.split('–')[0]?.trim());
 
     const punchConfig: Record<PunchPhase, {
         label: string;
@@ -367,52 +348,54 @@ export default function TimeLogs() {
         hint: string;
         onPress: () => void;
         color: string;
-        requiresFace: boolean;
+        requiresImage: boolean;
     }> = {
         punch_in: {
             label: 'Punch In',
             icon: LogIn,
-            disabled: !status.face_enrolled || !status.can_punch_in || (!isInGeofence && status.face_enrolled) || !punchInGuard.allowed,
-            hint: !status.face_enrolled ? 'Enroll your face first' : (!isInGeofence ? 'Outside of Geofence' : punchInGuard.hint),
+            disabled: !status.face_enrolled || !isInGeofence,
+            hint: !status.face_enrolled ? 'Enroll your face first' : (!isInGeofence ? 'Outside of Geofence' : 'Tap to punch in'),
             onPress: () => setCameraMode('punch_in'),
             color: themeColor,
-            requiresFace: true,
+            requiresImage: true,
         },
         break_out: {
             label: 'Break Out',
             icon: Coffee,
             disabled: !isInGeofence,
             hint: !isInGeofence ? 'Outside of Geofence' : 'Tap to break out',
-            onPress: () => setCameraMode('break_out'),
+            // Breaks do not require facial snapshots anymore, trigger directly
+            onPress: () => handlePunch(null, 'break_out'),
             color: '#F59E0B',
-            requiresFace: true,
+            requiresImage: false,
         },
         break_in: {
             label: 'Break In',
             icon: Sunrise,
             disabled: !isInGeofence,
             hint: !isInGeofence ? 'Outside of Geofence' : 'Tap to resume work',
-            onPress: () => setCameraMode('break_in'),
+            // Breaks do not require facial snapshots anymore, trigger directly
+            onPress: () => handlePunch(null, 'break_in'),
             color: '#10B981',
-            requiresFace: true,
+            requiresImage: false,
         },
         punch_out: {
             label: 'Punch Out',
             icon: LogOut,
-            disabled: !punchOutReady || !isInGeofence,
-            hint: punchOutReady ? (!isInGeofence ? 'Outside of Geofence' : 'Tap to punch out') : `Punch out available from ${status.today_attendance?.schedule_label?.split('–')[1]?.trim() ?? 'schedule end'}`,
+            disabled: !isInGeofence,
+            hint: !isInGeofence ? 'Outside of Geofence' : 'Tap to punch out',
             onPress: () => setCameraMode('punch_out'),
             color: '#EF4444',
-            requiresFace: true,
+            requiresImage: true,
         },
         done: {
             label: 'Day Complete 🎉',
             icon: CheckCircle2,
             disabled: true,
             hint: 'You have completed your hours for today',
-            onPress: () => { },
+            onPress: () => {},
             color: '#6B7280',
-            requiresFace: false,
+            requiresImage: false,
         },
     };
 
@@ -482,7 +465,7 @@ export default function TimeLogs() {
                             </Pressable>
                         </Animated.View>
                     )}
-                    ate
+
                     {status.face_enrolled && (
                         <Animated.View entering={FadeInUp.duration(500).delay(150).springify()} className="flex-row items-center rounded-2xl bg-white px-4 py-3 mb-4 border border-slate-100">
                             <CheckCircle2 color="#16A34A" size={20} />
@@ -551,14 +534,6 @@ export default function TimeLogs() {
                         <View className="px-5 pb-5">
                             <InfoRow icon={Clock} label="Schedule" value={status.today_attendance.schedule_label} themeColor={themeColor} />
                             <InfoRow icon={Clock} label="Hours Today" value={`${status.today_hours} hrs (${status.today_minutes} min)`} themeColor={themeColor} />
-                            {status.today_attendance.is_scheduled_today !== undefined && (
-                                <InfoRow
-                                    icon={Calendar}
-                                    label="Scheduled Today"
-                                    value={status.today_attendance.is_scheduled_today ? 'Yes' : 'No'}
-                                    themeColor={themeColor}
-                                />
-                            )}
                         </View>
                     </Animated.View>
 
@@ -589,35 +564,6 @@ export default function TimeLogs() {
                     </Animated.View>
 
                     <Animated.View
-                        entering={FadeInUp.duration(500).delay(450).springify()}
-                        className="rounded-3xl bg-white mb-4"
-                        style={{
-                            shadowColor: '#0F172A',
-                            shadowOpacity: 0.06,
-                            shadowRadius: 14,
-                            shadowOffset: { width: 0, height: 5 },
-                            elevation: 2,
-                            borderWidth: 1,
-                            borderColor: '#F1F5F9',
-                        }}
-                    >
-                        <View className="px-5 pt-5 pb-2">
-                            <Text className="text-[11px] font-bold uppercase tracking-[1.5px] text-slate-400">
-                                Lunch Break
-                            </Text>
-                        </View>
-                        <View className="px-5 pb-5">
-                            <InfoRow icon={Coffee} label="Lunch Time" value={status.lunch_break.lunch_time_label} themeColor={themeColor} />
-                            <InfoRow icon={Coffee} label="Afternoon Starts" value={status.lunch_break.afternoon_start_label} themeColor={themeColor} />
-                            <View className="mt-3 rounded-2xl px-4 py-3" style={{ backgroundColor: withAlpha(themeColor, '08') }}>
-                                <Text className="text-[12px] leading-5" style={{ color: themeColor }}>
-                                    {status.lunch_break.policy_message}
-                                </Text>
-                            </View>
-                        </View>
-                    </Animated.View>
-
-                    <Animated.View
                         entering={FadeInUp.duration(500).delay(600).springify()}
                         className="rounded-3xl bg-white mb-4"
                         style={{
@@ -634,15 +580,15 @@ export default function TimeLogs() {
                             <Text className="text-[11px] font-bold uppercase tracking-[1.5px] text-slate-400">
                                 Geofence
                             </Text>
-                            <View className={`rounded-full px-3 py-1 ${status.geofence.configured ? 'bg-green-50' : 'bg-red-50'}`}>
-                                <Text className={`text-[11px] font-bold uppercase tracking-wide ${status.geofence.configured ? 'text-green-700' : 'text-red-600'}`}>
-                                    {status.geofence.configured ? 'Configured' : 'Not Set'}
+                            <View className={`rounded-full px-3 py-1 ${status?.geofence?.configured ? 'bg-green-50' : 'bg-red-50'}`}>
+                                <Text className={`text-[11px] font-bold uppercase tracking-wide ${status?.geofence?.configured ? 'text-green-700' : 'text-red-600'}`}>
+                                    {status?.geofence?.configured ? 'Configured' : 'Not Set'}
                                 </Text>
                             </View>
                         </View>
                         <View className="px-5 pb-4 pt-2">
-                            <InfoRow icon={MapPin} label="Company" value={status.geofence.company_name} themeColor={themeColor} />
-                            <InfoRow icon={MapPin} label="Radius" value={`${status.geofence.radius_meters}m`} themeColor={themeColor} />
+                            <InfoRow icon={MapPin} label="Company" value={status?.geofence?.company_name || 'Unassigned'} themeColor={themeColor} />
+                            <InfoRow icon={MapPin} label="Radius" value={status?.geofence?.radius_meters ? `${status.geofence.radius_meters}m` : 'N/A'} themeColor={themeColor} />
                         </View>
                         {isGeofenceActive && dashboard?.company && polygonCoords && (
                             <GeofenceMap

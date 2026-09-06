@@ -61,11 +61,21 @@ export const useLogout = () => {
 
     return useMutation({
         mutationFn: async () => {
-            // Uncomment if backend requires a request to invalidate the active token
-            // await api.post('/logout');
-            await AsyncStorage.removeItem('token');
+            try {
+                // Call backend logout endpoint to revoke Sanctum token
+                await api.post('/auth/logout');
+            } catch (error) {
+                // Ignore API errors during logout (e.g. offline/network) to ensure user can clear local state
+                console.log('Backend logout error:', error);
+            } finally {
+                // Remove local stored auth items
+                await AsyncStorage.removeItem('token');
+                await AsyncStorage.removeItem('user_data');
+            }
         },
         onSuccess: () => {
+            queryClient.setQueryData(['auth'], null);
+            queryClient.setQueryData(['user_data'], null);
             queryClient.clear();
         },
     });

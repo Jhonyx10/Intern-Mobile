@@ -16,16 +16,19 @@ import Animated, {
     Layout,
 } from 'react-native-reanimated';
 import { Logo } from '../images/Logo';
+import { useLogin } from '../util/queries/auth';
 
 export default function Index() {
-    const [studentId, setStudentId] = useState('');
+    const [studentNumber, setStudentNumber] = useState('');
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
+    const { mutateAsync: login } = useLogin();
+
     const handleSignIn = async () => {
-        if (!studentId.trim() || !password) {
+        if (!studentNumber.trim() || !password) {
             setError('Please enter your student ID and password.');
             return;
         }
@@ -34,13 +37,11 @@ export default function Index() {
         setIsSubmitting(true);
 
         try {
-            // TODO: replace with the real authentication call, e.g.
-            // await signIn({ studentId: studentId.trim(), password });
-            await new Promise((resolve) => setTimeout(resolve, 900));
+            await login({ student_number: studentNumber.trim(), password });
         } catch (err: any) {
             setError(
                 err?.response?.data?.message ??
-                    'We could not sign you in. Check your details and try again.'
+                'We could not sign you in. Check your details and try again.'
             );
         } finally {
             setIsSubmitting(false);
@@ -124,9 +125,9 @@ export default function Index() {
                                     Student ID
                                 </Text>
                                 <TextInput
-                                    value={studentId}
+                                    value={studentNumber}
                                     onChangeText={(text) => {
-                                        setStudentId(text);
+                                        setStudentNumber(text);
                                         if (error) setError(null);
                                     }}
                                     autoCapitalize="none"
@@ -137,11 +138,10 @@ export default function Index() {
                                     placeholderTextColor="#94A3B8"
                                     editable={!isSubmitting}
                                     accessibilityLabel="Student ID"
-                                    className={`rounded-xl border bg-slate-50 px-3.5 text-base text-slate-900 ${
-                                        error && !studentId.trim()
-                                            ? 'border-red-300'
-                                            : 'border-slate-200'
-                                    } ${Platform.OS === 'ios' ? 'py-3.5' : 'py-3'}`}
+                                    className={`rounded-xl border bg-slate-50 px-3.5 text-base text-slate-900 ${error && !studentNumber.trim()
+                                        ? 'border-red-300'
+                                        : 'border-slate-200'
+                                        } ${Platform.OS === 'ios' ? 'py-3.5' : 'py-3'}`}
                                 />
                             </Animated.View>
 
@@ -153,11 +153,10 @@ export default function Index() {
                                     Password
                                 </Text>
                                 <View
-                                    className={`flex-row items-center overflow-hidden rounded-xl border bg-slate-50 ${
-                                        error && !password
-                                            ? 'border-red-300'
-                                            : 'border-slate-200'
-                                    }`}
+                                    className={`flex-row items-center overflow-hidden rounded-xl border bg-slate-50 ${error && !password
+                                        ? 'border-red-300'
+                                        : 'border-slate-200'
+                                        }`}
                                 >
                                     <TextInput
                                         value={password}
@@ -206,9 +205,8 @@ export default function Index() {
                                 disabled={isSubmitting}
                                 accessibilityRole="button"
                                 accessibilityState={{ disabled: isSubmitting }}
-                                className={`mt-4 min-h-[52px] items-center justify-center rounded-xl bg-blue-700 ${
-                                    isSubmitting ? 'opacity-70' : ''
-                                }`}
+                                className={`mt-4 min-h-[52px] items-center justify-center rounded-xl bg-blue-700 ${isSubmitting ? 'opacity-70' : ''
+                                    }`}
                             >
                                 {isSubmitting ? (
                                     <ActivityIndicator color="#FFFFFF" />

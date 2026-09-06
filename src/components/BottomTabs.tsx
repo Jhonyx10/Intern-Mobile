@@ -4,7 +4,7 @@ import {
     createBottomTabNavigator,
     type BottomTabBarProps,
 } from '@react-navigation/bottom-tabs';
-import { Home as HomeIcon, User } from 'lucide-react-native';
+import { LayoutGrid as HomeIcon, User, Clock10Icon, FileText } from 'lucide-react-native';
 import Animated, {
     useAnimatedStyle,
     useSharedValue,
@@ -14,6 +14,13 @@ import Animated, {
 
 import Home from '../pages/Home';
 import Profile from '../pages/Profile';
+import TimeLogs from '../pages/TimeLogs';
+import { Documents } from '../pages/Documents'; // using named or default depending on export
+import { useUser } from '../util/queries/auth';
+
+function withAlpha(hex: string, alpha: string) {
+    return `${hex}${alpha}`;
+}
 
 const Tab = createBottomTabNavigator();
 
@@ -26,14 +33,21 @@ const ICONS: Record<
 > = {
     Home: HomeIcon,
     Profile: User,
+    TimeLogs: Clock10Icon,
+    Documents: FileText,
 };
 
 const LABELS: Record<string, string> = {
     Home: 'Home',
     Profile: 'Profile',
+    TimeLogs: 'Time Logs',
+    Documents: 'Docs'
 };
 
 function CustomTabBar({ state, navigation }: BottomTabBarProps) {
+    const { data: userData } = useUser();
+    const themeColor = userData?.settings?.theme_color || ACTIVE_COLOR;
+
     const tabCount = state.routes.length;
     const [barWidth, setBarWidth] = React.useState(0);
     const tabWidth = barWidth / Math.max(tabCount, 1);
@@ -72,9 +86,10 @@ function CustomTabBar({ state, navigation }: BottomTabBarProps) {
             {tabWidth > 0 ? (
                 <Animated.View
                     pointerEvents="none"
-                    className="absolute top-2 bg-blue-50"
+                    className="absolute top-2"
                     style={[
                         {
+                            backgroundColor: withAlpha(themeColor, '12'),
                             height: 50,
                             borderRadius: 18,
                             marginHorizontal: 8,
@@ -96,6 +111,7 @@ function CustomTabBar({ state, navigation }: BottomTabBarProps) {
                         isFocused={isFocused}
                         label={label}
                         Icon={Icon}
+                        themeColor={themeColor}
                         onPress={() => {
                             const event = navigation.emit({
                                 type: 'tabPress',
@@ -118,6 +134,7 @@ function TabBarButton({
     isFocused,
     label,
     Icon,
+    themeColor,
     onPress,
 }: {
     isFocused: boolean;
@@ -127,6 +144,7 @@ function TabBarButton({
         size: number;
         strokeWidth: number;
     }>;
+    themeColor: string;
     onPress: () => void;
 }) {
     const scale = useSharedValue(1);
@@ -153,16 +171,14 @@ function TabBarButton({
         >
             <Animated.View style={iconStyle}>
                 <Icon
-                    color={isFocused ? ACTIVE_COLOR : INACTIVE_COLOR}
+                    color={isFocused ? themeColor : INACTIVE_COLOR}
                     size={22}
                     strokeWidth={isFocused ? 2.4 : 2}
                 />
             </Animated.View>
             <Animated.Text
-                style={labelStyle}
-                className={`mt-1 text-[11px] font-semibold ${
-                    isFocused ? 'text-blue-700' : 'text-slate-400'
-                }`}
+                style={[labelStyle, { color: isFocused ? themeColor : INACTIVE_COLOR }]}
+                className="mt-1 text-[11px] font-semibold"
             >
                 {label}
             </Animated.Text>
@@ -179,6 +195,8 @@ export default function BottomTabs() {
             }}
         >
             <Tab.Screen name="Home" component={Home} />
+            <Tab.Screen name="TimeLogs" component={TimeLogs} />
+            <Tab.Screen name="Documents" component={Documents} />
             <Tab.Screen name="Profile" component={Profile} />
         </Tab.Navigator>
     );

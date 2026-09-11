@@ -52,6 +52,7 @@ interface TimePunchPayload {
     longitude: number;
     location_accuracy_meters?: number;
     timestamp?: string;              // ISO string for offline sync history
+    task_note?: string | null; 
 }
 
 export const useTimeStatus = () => {
@@ -109,6 +110,10 @@ export const useTimePunch = () => {
                 formData.append('timestamp', payload.timestamp);
             }
 
+            if (payload.task_note) {
+                formData.append('task_note', payload.task_note);
+            }
+
             // Append image ONLY if it exists (required for time_in/time_out, skipped for breaks)
             if (payload.image) {
                 formData.append('image', {
@@ -126,6 +131,7 @@ export const useTimePunch = () => {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['time_status'] });
+            queryClient.invalidateQueries({ queryKey: ['dashboard'] });
         },
     });
 };

@@ -13,6 +13,7 @@ import {
   useSafeAreaInsets,
 } from 'react-native-safe-area-context';
 import Navigation from './src/components/Navigation';
+import { useGeofenceListeners } from './src/util/hooks/useGeoFenceMonitor';
 import "./global.css";
 
 const queryClient = new QueryClient({
@@ -39,6 +40,7 @@ function App() {
 
 function AppContent() {
   const safeAreaInsets = useSafeAreaInsets();
+  useGeofenceListeners();
 
   return (
     <View style={styles.container}>

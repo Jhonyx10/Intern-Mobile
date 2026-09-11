@@ -1,4 +1,4 @@
-package com.internapp
+package com.app.intern
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate

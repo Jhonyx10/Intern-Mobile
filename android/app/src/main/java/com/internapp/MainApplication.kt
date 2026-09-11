@@ -1,4 +1,4 @@
-package com.internapp
+package com.app.intern
 
 import android.app.Application
 import com.facebook.react.PackageList

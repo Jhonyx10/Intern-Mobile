@@ -14,6 +14,15 @@ export const saveToQueue = async (record: any) => {
     }
 };
 
+export const getOfflineQueue = async () => {
+    try {
+        const existingQueueStr = await AsyncStorage.getItem(QUEUE_STORAGE_KEY);
+        return existingQueueStr ? JSON.parse(existingQueueStr) : [];
+    } catch (e) {
+        return [];
+    }
+};
+
 export const syncOfflineQueue = async (timePunchMutation: Function) => {
     try {
         const netState = await NetInfo.fetch();
@@ -26,7 +35,7 @@ export const syncOfflineQueue = async (timePunchMutation: Function) => {
         if (queue.length === 0) return;
 
         const remainingQueue = [];
-        
+
         // Loop and send records using your React Query mutation
         for (const record of queue) {
             try {

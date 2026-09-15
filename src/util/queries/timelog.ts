@@ -52,14 +52,25 @@ interface TimePunchPayload {
     longitude: number;
     location_accuracy_meters?: number;
     timestamp?: string;              // ISO string for offline sync history
-    task_note?: string | null; 
+    task_note?: string | null;
 }
+
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import NetInfo from '@react-native-community/netinfo';
 
 export const useTimeStatus = () => {
     return useQuery({
         queryKey: ['time_status'],
         queryFn: async () => {
+            const netState = await NetInfo.fetch();
+            if (!netState.isConnected) {
+                const cached = await AsyncStorage.getItem('@cached_time_status');
+                if (cached) return JSON.parse(cached) as TimeStatus;
+                throw new Error('Offline and no cached data');
+            }
+
             const { data } = await api.get<TimeStatus>('/intern/time/status');
+            await AsyncStorage.setItem('@cached_time_status', JSON.stringify(data));
             return data;
         },
     });
@@ -95,7 +106,7 @@ export const useTimePunch = () => {
     return useMutation({
         mutationFn: async (payload: TimePunchPayload) => {
             const formData = new FormData();
-            
+
             // Append required fields
             formData.append('action', payload.action);
             formData.append('latitude', payload.latitude.toString());
@@ -136,3 +147,38 @@ export const useTimePunch = () => {
     });
 };
 
+export interface UpdateTaskPayload {
+    timeLogId: number;
+    note?: string | null;
+    photos?: { uri: string; name: string; type: string }[];
+}
+
+export const useTaskUpdate = () => {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: async (payload: UpdateTaskPayload) => {
+            const formData = new FormData();
+
+            if (payload.note !== undefined) {
+                formData.append('note', payload.note || '');
+            }
+
+            if (payload.photos && payload.photos.length > 0) {
+                payload.photos.forEach((photo) => {
+                    formData.append('files[]', photo as any);
+                });
+            }
+
+            const { data } = await api.post(`/intern/time/logs/${payload.timeLogId}/task-update`, formData, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+            });
+
+            return data;
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['time_status'] });
+            queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+        },
+    });
+};

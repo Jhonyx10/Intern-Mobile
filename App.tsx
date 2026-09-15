@@ -13,8 +13,11 @@ import {
   useSafeAreaInsets,
 } from 'react-native-safe-area-context';
 import Navigation from './src/components/Navigation';
-import { useGeofenceListeners } from './src/util/hooks/useGeoFenceMonitor';
+import { useGeoFenceListeners } from './src/util/hooks/useGeoFenceMonitor';
+import { ToastProvider } from './src/components/ToastProvider';
 import "./global.css";
+
+import { OfflineSyncProvider } from './src/components/OfflineSyncProvider';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -31,16 +34,19 @@ function App() {
   return (
     <SafeAreaProvider>
       <QueryClientProvider client={queryClient}>
-        <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
-        <AppContent />
+        <OfflineSyncProvider>
+          <ToastProvider>
+            <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
+            <AppContent />
+          </ToastProvider>
+        </OfflineSyncProvider>
       </QueryClientProvider>
     </SafeAreaProvider>
   );
 }
 
 function AppContent() {
-  const safeAreaInsets = useSafeAreaInsets();
-  useGeofenceListeners();
+  useGeoFenceListeners();
 
   return (
     <View style={styles.container}>

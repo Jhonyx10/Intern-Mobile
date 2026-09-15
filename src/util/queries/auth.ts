@@ -5,6 +5,7 @@ import { api } from '../api';
 interface LoginCredentials {
     student_number: string;
     password: string;
+    fcm_token?: string;
 }
 
 interface AuthResponse {

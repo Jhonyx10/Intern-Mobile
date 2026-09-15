@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { Text, View, ActivityIndicator, Pressable, Alert, Modal } from 'react-native';
 import {
     Camera,
@@ -6,15 +6,17 @@ import {
     useCameraDevice,
     useCameraPermission,
     usePhotoOutput,
+    CommonResolutions
 } from 'react-native-vision-camera';
 import { useFaceDetectorOutput } from 'react-native-vision-camera-face-detector';
 import { ScanFace, X } from 'lucide-react-native';
 
 const REQUIRED_BLINKS = 2;
-const WARMUP_MS = 1000;      // ignore blinks while camera/face settle in
-const CHALLENGE_WINDOW_MS = 8000; // must complete both blinks within this window
+const WARMUP_MS = 1000;            // ignore blinks while camera/face settle in
+const INTER_BLINK_TIMEOUT_MS = 5000; // must finish the 2nd blink within this long of the 1st
+const CHALLENGE_WINDOW_MS = 8000;  // overall cap from "ready" to fully verified
 
-export default function FaceEnrollModal({
+const FaceEnrollModal = React.memo(({
     visible,
     onClose,
     onEnroll,
@@ -30,16 +32,35 @@ export default function FaceEnrollModal({
     themeColor: string;
     title: string;
     captureLabel: string;
-}) {
+}) => {
     const { hasPermission, requestPermission } = useCameraPermission();
     const device = useCameraDevice('front');
     const camera = useRef<CameraRef>(null);
-    const photoOutput = usePhotoOutput();
+
+    // FIX: this config object was an inline literal before, recreated on every
+    // render (including every blink-detection state update). usePhotoOutput
+    // treats a new reference as "config changed", which busts the `outputs`
+    // memo below and forces the Camera to reconfigure (unbindAll -> rebind).
+    // If that happens while a capture is in flight, CameraX aborts it with
+    // "ImageCaptureException: Camera is closed" — exactly the crash you're seeing.
+    const photoOutputConfig = useMemo(
+        () => ({ targetResolution: CommonResolutions.HD_4_3 }), // Prevents Android high-res ImageCapture crashes
+        [],
+    );
+    const photoOutput = usePhotoOutput(photoOutputConfig);
+    const isCapturing = useRef(false);
 
     const [blinkCount, setBlinkCount] = useState(0);
     const [readyForChallenge, setReadyForChallenge] = useState(false);
+    const [timedOut, setTimedOut] = useState(false);
+
+    // Refs mirror the state above so the face-detector callback always reads
+    // the latest value without needing to be recreated every render.
+    const blinkCountRef = useRef(0);
+    const readyRef = useRef(false);
     const eyeState = useRef<'INITIAL' | 'OPEN' | 'CLOSED'>('INITIAL');
-    const challengeDeadline = useRef<number | null>(null);
+    const interBlinkDeadline = useRef<number | null>(null);
+    const challengeStart = useRef<number | null>(null);
 
     const isVerified = blinkCount >= REQUIRED_BLINKS;
 
@@ -55,80 +76,129 @@ export default function FaceEnrollModal({
 
         setBlinkCount(0);
         setReadyForChallenge(false);
+        setTimedOut(false);
+        blinkCountRef.current = 0;
+        readyRef.current = false;
         eyeState.current = 'INITIAL';
-        challengeDeadline.current = null;
+        interBlinkDeadline.current = null;
+        challengeStart.current = null;
 
         const warmupTimer = setTimeout(() => {
+            readyRef.current = true;
+            challengeStart.current = Date.now();
             setReadyForChallenge(true);
-            challengeDeadline.current = Date.now() + CHALLENGE_WINDOW_MS;
         }, WARMUP_MS);
 
         return () => clearTimeout(warmupTimer);
     }, [visible]);
 
-    const faceDetectorOutput = useFaceDetectorOutput({
-        performanceMode: 'fast',
-        runClassifications: true,
-        onFacesDetected(faces) {
-            if (!readyForChallenge || blinkCount >= REQUIRED_BLINKS) return;
+    const resetChallenge = useCallback(() => {
+        blinkCountRef.current = 0;
+        eyeState.current = 'INITIAL';
+        interBlinkDeadline.current = null;
+        challengeStart.current = Date.now();
+        setBlinkCount(0);
+        setTimedOut(true);
+        setTimeout(() => setTimedOut(false), 1500);
+    }, []);
 
-            // Challenge window expired without completing both blinks — reset and restart the window.
-            if (challengeDeadline.current !== null && Date.now() > challengeDeadline.current) {
-                setBlinkCount(0);
-                eyeState.current = 'INITIAL';
-                challengeDeadline.current = Date.now() + CHALLENGE_WINDOW_MS;
-                return;
-            }
+    // Stable callback: reads everything it needs from refs, so it never
+    // needs to be recreated, and the object below stays referentially equal.
+    const onFacesDetected = useCallback((faces: any[]) => {
+        // Freeze detection entirely once a capture is underway or the modal
+        // is in the middle of submitting, so no state churn can happen mid-capture.
+        if (isCapturing.current) return;
+        if (!readyRef.current || blinkCountRef.current >= REQUIRED_BLINKS) return;
 
-            if (faces.length === 1) {
-                const face = faces[0];
-                const left = face.leftEyeOpenProbability;
-                const right = face.rightEyeOpenProbability;
+        const now = Date.now();
 
-                if (left !== undefined && right !== undefined) {
-                    if (left > 0.6 && right > 0.6 && eyeState.current === 'INITIAL') {
-                        eyeState.current = 'OPEN';
-                    } else if (left < 0.4 && right < 0.4 && eyeState.current === 'OPEN') {
-                        eyeState.current = 'CLOSED';
-                    } else if (left > 0.6 && right > 0.6 && eyeState.current === 'CLOSED') {
-                        eyeState.current = 'OPEN';
-                        setBlinkCount((count) => count + 1);
-                    }
-                }
-            }
-        },
-        onError(error) {
-            console.error('Face detector error:', error);
-        }
-    });
-
-    const handleCapture = async () => {
-        if (!isVerified) {
-            Alert.alert('Liveness Check Required', `Please blink ${REQUIRED_BLINKS} times before capturing.`);
+        if (challengeStart.current !== null && now - challengeStart.current > CHALLENGE_WINDOW_MS) {
+            resetChallenge();
             return;
         }
+
+        if (
+            blinkCountRef.current > 0 &&
+            interBlinkDeadline.current !== null &&
+            now > interBlinkDeadline.current
+        ) {
+            resetChallenge();
+            return;
+        }
+
+        if (faces.length === 1) {
+            const face = faces[0];
+            const left = face.leftEyeOpenProbability;
+            const right = face.rightEyeOpenProbability;
+
+            if (left !== undefined && right !== undefined) {
+                if (left > 0.5 && right > 0.5 && eyeState.current === 'INITIAL') {
+                    eyeState.current = 'OPEN';
+                } else if (left < 0.35 && right < 0.35 && eyeState.current === 'OPEN') {
+                    eyeState.current = 'CLOSED';
+                } else if (left > 0.5 && right > 0.5 && eyeState.current === 'CLOSED') {
+                    eyeState.current = 'OPEN';
+                    const newCount = blinkCountRef.current + 1;
+                    blinkCountRef.current = newCount;
+                    if (newCount === 1) {
+                        interBlinkDeadline.current = now + INTER_BLINK_TIMEOUT_MS;
+                    }
+                    setBlinkCount(newCount);
+                }
+            }
+        }
+    }, [resetChallenge]);
+
+    const onFaceDetectorError = useCallback((error: unknown) => {
+        console.error('Face detector error:', error);
+    }, []);
+
+    const faceDetectorConfig = useMemo(
+        () => ({
+            performanceMode: 'accurate' as const,
+            runClassifications: true,
+            onFacesDetected,
+            onError: onFaceDetectorError,
+        }),
+        [onFacesDetected, onFaceDetectorError],
+    );
+
+    const faceDetectorOutput = useFaceDetectorOutput(faceDetectorConfig);
+
+    const constraints = useMemo(() => [{ fps: 30 }], []);
+    const outputs = useMemo(
+        () => [photoOutput, faceDetectorOutput],
+        [photoOutput, faceDetectorOutput],
+    );
+    const cameraStyle = useMemo(() => ({ flex: 1 }), []);
+
+    const handleCapture = async () => {
+        if (!isVerified || isCapturing.current) return;
+        isCapturing.current = true;
         try {
             if (!hasPermission) {
                 await requestPermission();
                 return;
             }
-            const photo = await photoOutput.capturePhoto({}, {});
-            const path = await photo.saveToTemporaryFileAsync();
-            if (path) {
-                const uri = `file://${path}`;
+            const photo = await photoOutput.capturePhotoToFile({}, {});
+            if (photo && photo.filePath) {
+                const uri = `file://${photo.filePath}`;
                 await onEnroll(uri);
-                photo.dispose();
             }
-        } catch (e) {
-            Alert.alert('Camera Error', 'Could not capture photo. Please try again.');
+        } catch (e: any) {
+            Alert.alert('Camera Error', 'Could not capture photo. Please try again.\n' + (e?.message || ''));
+        } finally {
+            isCapturing.current = false;
         }
     };
 
     const statusText = !readyForChallenge
         ? 'Getting ready...'
-        : isVerified
-            ? 'Perfect! Face verified.'
-            : `Position your face inside the guide and blink (${blinkCount}/${REQUIRED_BLINKS})`;
+        : timedOut
+            ? "That took a bit long — let's try again."
+            : isVerified
+                ? 'Perfect! Face verified.'
+                : `Position your face inside the guide and blink (${blinkCount}/${REQUIRED_BLINKS})`;
 
     return (
         <Modal visible={visible} animationType="slide" presentationStyle="fullScreen">
@@ -136,10 +206,11 @@ export default function FaceEnrollModal({
                 {device && hasPermission ? (
                     <Camera
                         ref={camera}
-                        style={{ flex: 1 }}
+                        style={cameraStyle}
                         device={device}
-                        isActive={visible && !isEnrolling}
-                        outputs={[photoOutput, faceDetectorOutput]}
+                        constraints={constraints}
+                        isActive={visible}
+                        outputs={outputs}
                     />
                 ) : (
                     <View className="flex-1 items-center justify-center">
@@ -148,7 +219,16 @@ export default function FaceEnrollModal({
                             Camera permission is required.
                         </Text>
                         <Pressable
-                            onPress={requestPermission}
+                            onPress={async () => {
+                                try {
+                                    const result = await requestPermission();
+                                    if (!result) {
+                                        Alert.alert('Permission Denied', 'Please go to your device settings to enable the camera.');
+                                    }
+                                } catch (e) {
+                                    Alert.alert('Error', 'Failed to request camera permission.');
+                                }
+                            }}
                             className="mt-6 px-6 py-3 rounded-full"
                             style={{ backgroundColor: themeColor }}
                         >
@@ -206,4 +286,10 @@ export default function FaceEnrollModal({
             </View>
         </Modal>
     );
-}
+}, (prev, next) => {
+    return prev.visible === next.visible &&
+        prev.isEnrolling === next.isEnrolling &&
+        prev.title === next.title;
+});
+
+export default FaceEnrollModal;

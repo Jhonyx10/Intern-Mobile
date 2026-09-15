@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import {
-    ActivityIndicator,
-    KeyboardAvoidingView,
-    Platform,
-    Pressable,
-    ScrollView,
-    Text,
-    TextInput,
-    View,
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  PermissionsAndroid,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
 } from 'react-native';
 import Animated, {
     FadeIn,
@@ -17,6 +18,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Logo } from '../images/Logo';
 import { useLogin } from '../util/queries/auth';
+import { getMessaging, getToken, requestPermission, AuthorizationStatus } from '@react-native-firebase/messaging';
 
 export default function Index() {
     const [studentNumber, setStudentNumber] = useState('');
@@ -26,6 +28,16 @@ export default function Index() {
     const [error, setError] = useState<string | null>(null);
 
     const { mutateAsync: login } = useLogin();
+
+    const requestNotificationPermission = async () => {
+        if (Platform.OS === 'android' && Platform.Version >= 33) {
+            const granted = await PermissionsAndroid.request(
+                PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS
+            );
+            return granted === PermissionsAndroid.RESULTS.GRANTED;
+        }
+        return true;
+    };
 
     const handleSignIn = async () => {
         if (!studentNumber.trim() || !password) {
@@ -37,7 +49,31 @@ export default function Index() {
         setIsSubmitting(true);
 
         try {
-            await login({ student_number: studentNumber.trim(), password });
+            let fcm_token = undefined;
+            try {
+                 const hasPermission = await requestNotificationPermission();
+                 if (!hasPermission) {
+                   console.log('User denied notification permission');
+                 }
+                 
+                const messagingInst = getMessaging();
+                const authStatus = await requestPermission(messagingInst);
+
+                const enabled =
+                    authStatus === AuthorizationStatus.AUTHORIZED ||
+                    authStatus === AuthorizationStatus.PROVISIONAL;
+
+                if (enabled) {
+                    fcm_token = await getToken(messagingInst);
+                    console.log('--- FCM TOKEN ---');
+                    console.log(fcm_token);
+                    console.log('-----------------');
+                }
+            } catch (e) {
+                console.log('FCM Token error:', e);
+            }
+
+            await login({ student_number: studentNumber.trim(), password, fcm_token });
         } catch (err: any) {
             setError(
                 err?.response?.data?.message ??

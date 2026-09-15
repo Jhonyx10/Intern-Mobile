@@ -6,9 +6,14 @@ import { useAuth } from '../util/queries/auth';
 import Index from '../pages/Index';
 import BottomTabs from './BottomTabs';
 
+import UpdateTaskScreen from '../pages/UpdateTaskScreen';
+import { MyEvaluation } from '../pages/MyEvaluation';
+
 export type RootStackParamList = {
-    Login: undefined;
-    Main: undefined;
+  Login: undefined;
+  Main: undefined;
+  UpdateTask: { timeLogId: number };
+  MyEvaluation: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -28,7 +33,11 @@ export default function RootNavigator() {
         <NavigationContainer>
             <Stack.Navigator screenOptions={{ headerShown: false }}>
                 {userToken ? (
-                    <Stack.Screen name="Main" component={BottomTabs} />
+                    <Stack.Group>
+                        <Stack.Screen name="Main" component={BottomTabs} />
+                        <Stack.Screen name="UpdateTask" component={UpdateTaskScreen} options={{ presentation: 'modal' }} />
+                        <Stack.Screen name="MyEvaluation" component={MyEvaluation} options={{ presentation: 'modal'}} />
+                    </Stack.Group>
                 ) : (
                     <Stack.Screen name="Login" component={Index} />
                 )}

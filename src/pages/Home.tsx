@@ -142,9 +142,11 @@ export default function Home() {
         );
     }
 
-    const { student, course, company, progress } = dashboard;
+    const { student, course, company, progress, placement_status, removal_reason } = dashboard;
     const firstName = student?.full_name ? student.full_name.split(' ')[0] : 'Intern';
-    const isUnassigned = !company || !company.name || company.name.toLowerCase() === 'unassigned';
+    const isRemoved = placement_status === 'removed';
+    const isUnassigned = placement_status === 'unassigned' || (!company || !company.name);
+
 
     const handleOpenModal = async () => {
         setIsModalOpen(true);
@@ -234,7 +236,38 @@ export default function Home() {
                         <Text className="text-white/60 text-[13px] mt-1">{student?.section ?? 'N/A'} · {course?.code ?? 'N/A'}</Text>
                     </LinearGradient>
                 </Animated.View>
-
+                {isRemoved && (
+                    <Animated.View entering={FadeInUp.duration(500).delay(280).springify()} className="mt-4 px-5">
+                        <View
+                            className="rounded-3xl bg-white p-5"
+                            style={{
+                                borderWidth: 1.5,
+                                borderColor: '#FCA5A5',
+                                shadowColor: '#0F172A',
+                                shadowOpacity: 0.06,
+                                shadowRadius: 14,
+                                shadowOffset: { width: 0, height: 5 },
+                                elevation: 2,
+                            }}
+                        >
+                            <Text className="text-[11px] font-bold uppercase tracking-[1.5px] text-red-500 mb-2">
+                                Removed from Program
+                            </Text>
+                            <Text className="text-[13px] text-slate-700 leading-5">
+                                You were removed from your placement at{' '}
+                                <Text className="font-bold">{company?.name ?? 'your company'}</Text>.
+                            </Text>
+                            {removal_reason && (
+                                <Text className="text-[12px] text-slate-500 mt-2 leading-5">
+                                    Reason: {removal_reason}
+                                </Text>
+                            )}
+                            <Text className="text-[12px] text-slate-400 mt-3">
+                                Contact your coordinator if you believe this is a mistake, or request a new company below.
+                            </Text>
+                        </View>
+                    </Animated.View>
+                )}
                 {/* Progress card overlapping header */}
                 <Animated.View entering={FadeInUp.duration(500).delay(200).springify()} className="px-5" style={{ marginTop: -36 }}>
                     <View
@@ -299,18 +332,18 @@ export default function Home() {
                         <InfoRow icon={Building2} label="Company Name" value={company?.name || 'Unassigned'} themeColor={themeColor} />
                         <InfoRow icon={TrendingUp} label="Geo-fence Radius" value={company?.radius_meters ? `${company.radius_meters}m` : 'N/A'} themeColor={themeColor} />
 
-                        {isUnassigned && (
-                            <Pressable
-                                onPress={handleOpenModal}
-                                className="mt-3 flex-row items-center justify-center rounded-2xl py-3 px-4"
-                                style={{ backgroundColor: withAlpha(themeColor, '15') }}
-                            >
-                                <Send color={themeColor} size={16} strokeWidth={2} />
-                                <Text className="font-bold text-[13px] ml-2" style={{ color: themeColor }}>
-                                    Request a Company
-                                </Text>
-                            </Pressable>
-                        )}
+                        {(isUnassigned || isRemoved) && (
+    <Pressable
+        onPress={handleOpenModal}
+        className="mt-3 flex-row items-center justify-center rounded-2xl py-3 px-4"
+        style={{ backgroundColor: withAlpha(themeColor, '15') }}
+    >
+        <Send color={themeColor} size={16} strokeWidth={2} />
+        <Text className="font-bold text-[13px] ml-2" style={{ color: themeColor }}>
+            Request a Company
+        </Text>
+    </Pressable>
+)}
                     </Card>
                 </Animated.View>
             </ScrollView>

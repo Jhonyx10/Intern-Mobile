@@ -44,6 +44,8 @@ export interface DashboardData {
         };
     };
     progress: DashboardProgress;
+    placement_status: 'active' | 'removed' | 'unassigned';
+    removal_reason: string | null;
 }
 
 export interface CompanyRequestPayload {

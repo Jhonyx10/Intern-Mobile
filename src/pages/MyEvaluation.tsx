@@ -63,9 +63,8 @@ const EvaluationRow = ({
     layout={LinearTransition.springify()}
     className="mb-3"
   >
-    <Pressable
-      onPress={onPress}
-      className="flex-row items-start rounded-3xl bg-white p-4 active:opacity-70"
+    <View
+      className="flex-row items-start rounded-3xl bg-white p-4"
       style={CARD_SHADOW}
     >
       <View
@@ -104,9 +103,7 @@ const EvaluationRow = ({
             ` · Score ${evaluation.computed_score}`}
         </Text>
       </View>
-
-      <ChevronRight color="#CBD5E1" size={18} style={{ marginTop: 2 }} />
-    </Pressable>
+    </View>
   </Animated.View>
 );
 
@@ -124,9 +121,8 @@ const StatCell = ({
   divider?: boolean;
 }) => (
   <View
-    className={`flex-1 items-center py-4 ${
-      divider ? 'border-l border-slate-100' : ''
-    }`}
+    className={`flex-1 items-center py-4 ${divider ? 'border-l border-slate-100' : ''
+      }`}
   >
     <View
       className="items-center justify-center rounded-full"
@@ -142,7 +138,6 @@ const StatCell = ({
 );
 
 export const MyEvaluation = () => {
-  const [selectedId, setSelectedId] = useState<number | null>(null);
   const { data, isLoading, isRefetching, refetch } = useMyEvaluations();
   const { data: userData } = useUser();
   const primeEvaluation = usePrimeEvaluation();
@@ -163,20 +158,14 @@ export const MyEvaluation = () => {
     const scored = submitted.filter(e => e.computed_score != null);
     const avg = scored.length
       ? (
-          scored.reduce((sum, e) => sum + (e.computed_score ?? 0), 0) /
-          scored.length
-        ).toFixed(1)
+        scored.reduce((sum, e) => sum + (e.computed_score ?? 0), 0) /
+        scored.length
+      ).toFixed(1)
       : '—';
     return { pending, submittedCount: submitted.length, avg };
   }, [evaluations]);
 
-  const openSheet = useCallback(
-    (evaluation: Evaluation) => {
-      primeEvaluation(evaluation);
-      setSelectedId(evaluation.id);
-    },
-    [primeEvaluation],
-  );
+
 
   if (isLoading) {
     return (
@@ -271,7 +260,7 @@ export const MyEvaluation = () => {
               evaluation={item}
               index={index}
               themeColor={themeColor}
-              onPress={() => openSheet(item)}
+              onPress={() => { }}
             />
           </View>
         )}
@@ -305,10 +294,7 @@ export const MyEvaluation = () => {
         }
       />
 
-      <EvaluationSheet
-        evaluationId={selectedId}
-        onClose={() => setSelectedId(null)}
-      />
+
     </View>
   );
 };

@@ -18,10 +18,15 @@ import {
   ChevronRight,
   Bell,
   Palette,
+  CheckCircle2,
+  Building2,
+  UserCircle,
+  MapPin,
 } from 'lucide-react-native';
 import LinearGradient from 'react-native-linear-gradient';
 import Reanimated, { FadeInUp } from 'react-native-reanimated';
 import { useUser, useLogout } from '../util/queries/auth';
+import { useInternProfile } from '../util/queries/profile';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../components/Navigation';
@@ -54,10 +59,11 @@ export default function Profile({
   onNavigateToEvaluations,
   onNavigateToSettings,
 }: ProfileProps) {
-    const { data: userData, isLoading } = useUser();
-    const { mutateAsync: logout, isPending } = useLogout();
-    const navigation = useNavigation<NavigationProp>();
-    const scrollY = useRef(new Animated.Value(0)).current;
+  const { data: userData, isLoading: isUserLoading } = useUser();
+  const { data: profileData, isLoading: isProfileLoading } = useInternProfile();
+  const { mutateAsync: logout, isPending } = useLogout();
+  const navigation = useNavigation<NavigationProp>();
+  const scrollY = useRef(new Animated.Value(0)).current;
 
   const headerScale = scrollY.interpolate({
     inputRange: [-100, 0],
@@ -71,7 +77,7 @@ export default function Profile({
     extrapolate: 'clamp',
   });
 
-  if (isLoading) {
+  if (isUserLoading || isProfileLoading) {
     return (
       <View className="flex-1 items-center justify-center bg-white">
         <ActivityIndicator size="large" color="#1D4ED8" />
@@ -92,10 +98,10 @@ export default function Profile({
   const displayName = student?.full_name || user?.name || 'Student Intern';
 
   const details = [
-    { icon: Hash, label: 'Student Number', value: student?.student_number },
-    { icon: Mail, label: 'Email Address', value: user?.email },
-    { icon: BookOpen, label: 'Course', value: course?.course_name },
-    { icon: GraduationCap, label: 'Section', value: section?.name },
+    { icon: Hash, label: 'Student Number', value: profileData?.student?.student_number || student?.student_number },
+    { icon: Mail, label: 'Email Address', value: profileData?.user?.email || user?.email, isEmail: true, verified: !!profileData?.user?.email_verified_at },
+    { icon: BookOpen, label: 'Course', value: profileData?.section?.course?.name || course?.course_name },
+    { icon: GraduationCap, label: 'Section', value: profileData?.section?.name || section?.name },
   ];
 
   const menuItems = [
@@ -109,7 +115,7 @@ export default function Profile({
       icon: SettingsIcon,
       label: 'Settings',
       sublabel: 'Notifications, appearance, and account',
-      onPress: onNavigateToSettings,
+      onPress: () => navigation.navigate('Settings'),
     },
   ];
 
@@ -245,11 +251,10 @@ export default function Profile({
             return (
               <View
                 key={item.label}
-                className={`flex-row items-center px-4 py-4 ${
-                  index !== details.length - 1
-                    ? 'border-b border-slate-100'
-                    : ''
-                }`}
+                className={`flex-row items-center px-4 py-4 ${index !== details.length - 1
+                  ? 'border-b border-slate-100'
+                  : ''
+                  }`}
               >
                 <View
                   className="items-center justify-center rounded-full"
@@ -262,10 +267,18 @@ export default function Profile({
                   <Icon color={themeColor} size={18} strokeWidth={2.25} />
                 </View>
                 <View className="ml-3.5 flex-1">
-                  <Text className="text-[11px] text-slate-400 font-medium">
-                    {item.label}
-                  </Text>
-                  <Text className="text-[15px] font-semibold text-slate-900 mt-0.5">
+                  <View className="flex-row items-center justify-between">
+                    <Text className="text-[11px] text-slate-400 font-medium">
+                      {item.label}
+                    </Text>
+                    {item.isEmail && item.verified && (
+                      <View className="flex-row items-center rounded-lg bg-emerald-50 px-2 py-0.5">
+                        <CheckCircle2 color="#10B981" size={12} />
+                        <Text className="ml-1 text-[10px] font-bold text-emerald-600">Verified</Text>
+                      </View>
+                    )}
+                  </View>
+                  <Text className="text-[15px] font-semibold text-slate-900 mt-0.5" numberOfLines={1}>
                     {item.value || 'N/A'}
                   </Text>
                 </View>
@@ -274,6 +287,67 @@ export default function Profile({
           })}
         </View>
       </Reanimated.View>
+
+      {/* Placement Details */}
+      {profileData?.placement?.company && (
+        <Reanimated.View
+          entering={FadeInUp.duration(500).delay(400).springify()}
+          className="px-6 mt-7"
+        >
+          <Text className="text-[11px] font-bold uppercase tracking-[1.5px] text-slate-400 mb-3 ml-1">
+            Placement Details
+          </Text>
+          <View
+            className="rounded-3xl bg-white"
+            style={{
+              shadowColor: '#0F172A',
+              shadowOpacity: 0.06,
+              shadowRadius: 16,
+              shadowOffset: { width: 0, height: 6 },
+              elevation: 2,
+              borderWidth: 1,
+              borderColor: '#F1F5F9',
+            }}
+          >
+            {/* Company Info */}
+            <View className={`flex-row items-center px-4 py-4 ${profileData.placement.supervisor ? 'border-b border-slate-100' : ''}`}>
+              <View
+                className="items-center justify-center rounded-full"
+                style={{ width: 38, height: 38, backgroundColor: withAlpha(themeColor, '12') }}
+              >
+                <Building2 color={themeColor} size={18} strokeWidth={2.25} />
+              </View>
+              <View className="ml-3.5 flex-1">
+                <Text className="text-[11px] text-slate-400 font-medium">Company</Text>
+                <Text className="text-[15px] font-semibold text-slate-900 mt-0.5">{profileData.placement.company.name}</Text>
+                {profileData.placement.company.address ? (
+                  <View className="flex-row items-start mt-1 pr-4">
+                    <MapPin color="#94A3B8" size={12} style={{ marginTop: 2, flexShrink: 0 }} />
+                    <Text className="text-[11px] text-slate-500 ml-1 flex-1 leading-4">{profileData.placement.company.address}</Text>
+                  </View>
+                ) : null}
+              </View>
+            </View>
+
+            {/* Supervisor Info */}
+            {profileData.placement.supervisor && (
+              <View className="flex-row items-center px-4 py-4">
+                <View
+                  className="items-center justify-center rounded-full"
+                  style={{ width: 38, height: 38, backgroundColor: withAlpha(themeColor, '12') }}
+                >
+                  <UserCircle color={themeColor} size={18} strokeWidth={2.25} />
+                </View>
+                <View className="ml-3.5 flex-1">
+                  <Text className="text-[11px] text-slate-400 font-medium">Supervisor</Text>
+                  <Text className="text-[15px] font-semibold text-slate-900 mt-0.5">{profileData.placement.supervisor.name}</Text>
+                  <Text className="text-[11px] text-slate-500 mt-0.5">{profileData.placement.supervisor.position_title || 'Supervisor'}</Text>
+                </View>
+              </View>
+            )}
+          </View>
+        </Reanimated.View>
+      )}
 
       {/* Evaluation & Settings */}
       <Reanimated.View
@@ -302,11 +376,10 @@ export default function Profile({
               <Pressable
                 key={item.label}
                 onPress={item.onPress}
-                className={`flex-row items-center px-4 py-4 ${
-                  index !== menuItems.length - 1
-                    ? 'border-b border-slate-100'
-                    : ''
-                }`}
+                className={`flex-row items-center px-4 py-4 ${index !== menuItems.length - 1
+                  ? 'border-b border-slate-100'
+                  : ''
+                  }`}
               >
                 <View
                   className="items-center justify-center rounded-full"
@@ -341,9 +414,8 @@ export default function Profile({
         <Pressable
           onPress={() => logout()}
           disabled={isPending}
-          className={`flex-row items-center justify-center rounded-full py-4 mt-8 ${
-            isPending ? 'opacity-60' : ''
-          }`}
+          className={`flex-row items-center justify-center rounded-full py-4 mt-8 ${isPending ? 'opacity-60' : ''
+            }`}
           style={{
             backgroundColor: '#FEF2F2',
             borderWidth: 1.5,

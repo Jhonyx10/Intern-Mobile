@@ -182,3 +182,23 @@ export const useTaskUpdate = () => {
         },
     });
 };
+
+export interface TaskCheckerResult {
+    time_log_id: number;
+    has_note: boolean;
+    has_photos: boolean;
+    needs_update: boolean;
+    message: string;
+}
+
+export const useTaskChecker = (timeLogId: number | null) => {
+    return useQuery({
+        queryKey: ['task_checker', timeLogId],
+        queryFn: async () => {
+            const { data } = await api.get<TaskCheckerResult>(`/intern/time/logs/${timeLogId}/task-checker`);
+            return data;
+        },
+        enabled: timeLogId != null,
+        staleTime: 30 * 1000,
+    });
+};

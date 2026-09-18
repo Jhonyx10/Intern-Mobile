@@ -41,8 +41,11 @@ export const useUploadDocument = () => {
     });
 };
 
-export const downloadDocumentFile = async (documentId: string) => {
+// `period` selects a specific past submission for a recurring document
+// (e.g. a prior week's report). Omit it to fetch the current/most recent one.
+export const downloadDocumentFile = async (documentId: string, period?: string) => {
     const response = await api.get(`/intern/documents/download/${documentId}`, {
+        params: period ? { period } : undefined,
         responseType: 'arraybuffer',
     });
 
@@ -56,7 +59,8 @@ export const downloadDocumentFile = async (documentId: string) => {
     const base64Data = ReactNativeBlobUtil.base64.encode(binary);
 
     const { fs } = ReactNativeBlobUtil;
-    const path = `${fs.dirs.CacheDir}/doc_${documentId}_${Date.now()}.pdf`;
+    const suffix = period ? `_${period}` : '';
+    const path = `${fs.dirs.CacheDir}/doc_${documentId}${suffix}_${Date.now()}.pdf`;
 
     await fs.writeFile(path, base64Data, 'base64');
 

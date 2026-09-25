@@ -154,54 +154,70 @@ export default function TimeLogs() {
       await enrollFace({ image: imageUri });
       setCameraMode(null);
       showToast('Your face has been enrolled successfully!', 'success');
-    } catch {
+    } catch (err: any) {
       showToast('Face enrollment failed. Please try again.', 'error');
     }
   };
 
-  const handlePunch = async (
-    imageUri: string | null,
-    action: 'time_in' | 'time_out' | 'break_out' | 'break_in',
-  ) => {
-    const latitude = userLocation?.[1] ?? 0;
-    const longitude = userLocation?.[0] ?? 0;
-    const record: any = {
-      action,
-      image: imageUri,
-      latitude,
-      longitude,
-      timestamp: new Date().toISOString(),
-    };
+const handlePunch = async (
+  imageUri: string | null,
+  action: 'time_in' | 'time_out' | 'break_out' | 'break_in',
+) => {
+  const latitude = userLocation?.[1] ?? 0;
+  const longitude = userLocation?.[0] ?? 0;
+  const record: any = {
+    action,
+    image: imageUri,
+    latitude,
+    longitude,
+    timestamp: new Date().toISOString(),
+  };
 
-    const netState = await NetInfo.fetch();
+  const netState = await NetInfo.fetch();
 
-    if (!netState.isConnected) {
-      await saveToQueue(record);
-      setCameraMode(null);
-      setTaskNoteModalVisible(false);
-      showToast(
-        'No internet connection. Saved locally and will sync when online.',
-        'info',
-      );
+  if (!netState.isConnected) {
+    await saveToQueue(record);
+    setCameraMode(null);
+    setTaskNoteModalVisible(false);
+    showToast(
+      'No internet connection. Saved locally and will sync when online.',
+      'info',
+    );
+    return;
+  }
+
+  try {
+    const res = await timePunch(record);
+    setCameraMode(null);
+    setTaskNoteModalVisible(false);
+    showToast(res?.message ?? 'Action completed successfully!', 'success');
+    syncOfflineQueue(timePunch, (record, msg) => {
+      showToast(`Offline punch (${record.action}) couldn't be synced: ${msg}`, 'error');
+    });
+  } catch (e: any) {
+    setCameraMode(null);
+    setTaskNoteModalVisible(false);
+
+    if (e?.response?.status) {
+      const msg =
+        e.response?.data?.message ??
+        'That action could not be completed. Please check the details and try again.';
+      showToast(msg, 'error');
+
+      if (action === 'time_out' && e.response.status === 422) {
+        refetch();
+      }
       return;
     }
 
-    try {
-      const res = await timePunch(record);
-      setCameraMode(null);
-      setTaskNoteModalVisible(false);
-      showToast(res?.message ?? 'Action completed successfully!', 'success');
-      syncOfflineQueue(timePunch);
-    } catch (e) {
-      await saveToQueue(record);
-      setCameraMode(null);
-      setTaskNoteModalVisible(false);
-      showToast(
-        'Server unreachable. Your punch has been saved locally.',
-        'error',
-      );
-    }
-  };
+    // No response at all — genuine network/server-unreachable case.
+    await saveToQueue(record);
+    showToast(
+      'Server unreachable. Your punch has been saved locally.',
+      'error',
+    );
+  }
+};
 
   const handleActionPress = (
     action: 'break_out' | 'break_in' | 'punch_out',
@@ -606,11 +622,19 @@ export default function TimeLogs() {
               borderColor: '#F1F5F9',
             }}
           >
-            <View className="px-5 pt-5 pb-2">
-              <Text className="text-[11px] font-bold uppercase tracking-[1.5px] text-slate-400">
-                Today's Timeline
-              </Text>
-            </View>
+            <View className="px-5 pt-5 pb-2 flex-row items-center justify-between">
+                <Text className="text-[11px] font-bold uppercase tracking-[1.5px] text-slate-400">
+                  Today's Timeline
+                </Text>
+                <Pressable
+                  onPress={() => navigation.navigate('TimeLogHistory')}
+                  className="flex-row items-center"
+                >
+                  <Text className="text-[11px] font-bold" style={{ color: themeColor }}>
+                    View History
+                  </Text>
+                </Pressable>
+              </View>
             <View className="px-5 pb-5">
               <InfoRow
                 icon={LogIn}

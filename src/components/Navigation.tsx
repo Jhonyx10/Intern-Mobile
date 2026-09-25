@@ -9,6 +9,8 @@ import BottomTabs from './BottomTabs';
 import UpdateTaskScreen from '../pages/UpdateTaskScreen';
 import { MyEvaluation } from '../pages/MyEvaluation';
 import { Settings } from '../pages/Settings'
+import { TimeLogHistory } from '../pages/TimeLogHistory';
+import TimeLogDetails from '../pages/TimeLogDetails';
 
 export type RootStackParamList = {
   Login: undefined;
@@ -16,6 +18,8 @@ export type RootStackParamList = {
   UpdateTask: { timeLogId: number };
   MyEvaluation: undefined;
   Settings: undefined;
+  TimeLogHistory: undefined;
+  TimeLogDetails: { timeLogId: number };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -52,6 +56,16 @@ export default function RootNavigator() {
                 component={Settings}
                 options={{ presentation: 'modal' }}
               />
+              <Stack.Screen
+                  name="TimeLogHistory"
+                  component={TimeLogHistory}
+                  options={{ presentation: 'card' }} 
+                />
+                <Stack.Screen
+                  name="TimeLogDetails"
+                  component={TimeLogDetails}
+                  options={{ presentation: 'card' }}
+                />
             </Stack.Group>
           ) : (
             <Stack.Screen name="Login" component={Index} />

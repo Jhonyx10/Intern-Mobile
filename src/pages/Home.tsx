@@ -4,11 +4,25 @@ import { Building2, Clock, CalendarDays, TrendingUp, Send, X, MapPin } from 'luc
 import LinearGradient from 'react-native-linear-gradient';
 import Animated, { FadeIn, FadeInUp, FadeInDown } from 'react-native-reanimated';
 import Geolocation from '@react-native-community/geolocation';
-import { useDashboard, useRequestCompany } from '../util/queries/dashboard';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import { useDashboard, useRequestCompany, useRequestSchedule } from '../util/queries/dashboard';
 import { useUser } from '../util/queries/auth';
 
 function withAlpha(hex: string, alpha: string) {
     return `${hex}${alpha}`;
+}
+
+function formatTime(date: Date) {
+    return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+function formatTimeDisplay(time24: string) {
+    if (!time24) return '';
+    const [hoursStr, minutes] = time24.split(':');
+    const hours = parseInt(hoursStr, 10);
+    const period = hours >= 12 ? 'PM' : 'AM';
+    const hour12 = hours % 12 === 0 ? 12 : hours % 12;
+    return `${hour12}:${minutes} ${period}`;
 }
 
 async function requestLocationPermission(): Promise<boolean> {
@@ -114,6 +128,7 @@ export default function Home() {
     const { data: dashboard, isLoading, isError, refetch } = useDashboard();
     const { data: userData } = useUser();
     const { mutateAsync: requestCompany, isPending: isSubmittingRequest } = useRequestCompany();
+    const { mutateAsync: requestSchedule, isPending: isSubmittingSchedule } = useRequestSchedule();
     const themeColor = userData?.settings?.theme_color || '#1D4ED8';
 
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -123,6 +138,47 @@ export default function Home() {
     const [latitude, setLatitude] = useState<number | null>(null);
     const [longitude, setLongitude] = useState<number | null>(null);
     const [isFetchingLocation, setIsFetchingLocation] = useState(false);
+
+    const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
+    const [reqStartDate, setReqStartDate] = useState('');
+    const [reqTimeIn, setReqTimeIn] = useState('');
+    const [reqTimeOut, setReqTimeOut] = useState('');
+    const [reqHoursPerDay, setReqHoursPerDay] = useState('');
+    const [reqDaysPerWeek, setReqDaysPerWeek] = useState('');
+    const [reqReason, setReqReason] = useState('');
+
+    const [showDatePicker, setShowDatePicker] = useState(false);
+    const [showTimeInPicker, setShowTimeInPicker] = useState(false);
+    const [showTimeOutPicker, setShowTimeOutPicker] = useState(false);
+
+    const onDateChange = (event: any, selectedDate?: Date) => {
+        setShowDatePicker(Platform.OS === 'ios');
+        if (selectedDate && event.type === 'set') {
+            const d = selectedDate;
+            const formatted = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            setReqStartDate(formatted);
+        } else if (event.type === 'dismissed') {
+            setShowDatePicker(false);
+        }
+    };
+
+    const onTimeInChange = (event: any, selectedTime?: Date) => {
+        setShowTimeInPicker(Platform.OS === 'ios');
+        if (selectedTime && event.type === 'set') {
+            setReqTimeIn(formatTime(selectedTime));
+        } else if (event.type === 'dismissed') {
+            setShowTimeInPicker(false);
+        }
+    };
+
+    const onTimeOutChange = (event: any, selectedTime?: Date) => {
+        setShowTimeOutPicker(Platform.OS === 'ios');
+        if (selectedTime && event.type === 'set') {
+            setReqTimeOut(formatTime(selectedTime));
+        } else if (event.type === 'dismissed') {
+            setShowTimeOutPicker(false);
+        }
+    };
 
     if (isLoading) {
         return (
@@ -206,6 +262,37 @@ export default function Home() {
             refetch();
         } catch (e: any) {
             const msg = e?.response?.data?.message || 'Failed to submit company request. Please try again.';
+            Alert.alert('Error', msg);
+        }
+    };
+
+    const handleScheduleSubmit = async () => {
+        if (!reqStartDate.trim() || !reqTimeIn.trim() || !reqTimeOut.trim()) {
+            Alert.alert('Missing Fields', 'Please enter Start Date, Time In, and Time Out as they are required.');
+            return;
+        }
+
+        try {
+            await requestSchedule({
+                start_date: reqStartDate.trim(),
+                time_in: reqTimeIn.trim(),
+                time_out: reqTimeOut.trim(),
+                hours_per_day: reqHoursPerDay ? parseFloat(reqHoursPerDay) : null,
+                days_per_week: reqDaysPerWeek ? parseInt(reqDaysPerWeek, 10) : null,
+                reason: reqReason.trim() || null,
+            });
+
+            setIsScheduleModalOpen(false);
+            setReqStartDate('');
+            setReqTimeIn('');
+            setReqTimeOut('');
+            setReqHoursPerDay('');
+            setReqDaysPerWeek('');
+            setReqReason('');
+            Alert.alert('Request Sent ✅', 'Your schedule request has been submitted to your coordinator.');
+            refetch();
+        } catch (e: any) {
+            const msg = e?.response?.data?.message || 'Failed to submit schedule request. Please try again.';
             Alert.alert('Error', msg);
         }
     };
@@ -323,6 +410,19 @@ export default function Home() {
                         <InfoRow icon={Clock} label="Daily Hours" value={progress?.schedule ? `${progress.schedule.time_in} – ${progress.schedule.time_out} (${progress.schedule.hours_per_day} hrs/day)` : 'Not assigned'} themeColor={themeColor} />
                         <InfoRow icon={CalendarDays} label="Days per Week" value={progress?.schedule ? `${progress.schedule.days_per_week} days/week` : 'Not assigned'} themeColor={themeColor} />
                         <InfoRow icon={TrendingUp} label="Est. Completion" value={progress?.estimated_end_date ? `${progress.estimated_end_date}${progress.estimated_end_is_approximate ? ' (approx.)' : ''}` : 'N/A'} themeColor={themeColor} />
+
+                        {!isUnassigned && !isRemoved && (
+                            <Pressable
+                                onPress={() => setIsScheduleModalOpen(true)}
+                                className="mt-3 flex-row items-center justify-center rounded-2xl py-3 px-4"
+                                style={{ backgroundColor: withAlpha(themeColor, '15') }}
+                            >
+                                <CalendarDays color={themeColor} size={16} strokeWidth={2} />
+                                <Text className="font-bold text-[13px] ml-2" style={{ color: themeColor }}>
+                                    Request Schedule
+                                </Text>
+                            </Pressable>
+                        )}
                     </Card>
                 </Animated.View>
 
@@ -333,17 +433,17 @@ export default function Home() {
                         <InfoRow icon={TrendingUp} label="Geo-fence Radius" value={company?.radius_meters ? `${company.radius_meters}m` : 'N/A'} themeColor={themeColor} />
 
                         {(isUnassigned || isRemoved) && (
-    <Pressable
-        onPress={handleOpenModal}
-        className="mt-3 flex-row items-center justify-center rounded-2xl py-3 px-4"
-        style={{ backgroundColor: withAlpha(themeColor, '15') }}
-    >
-        <Send color={themeColor} size={16} strokeWidth={2} />
-        <Text className="font-bold text-[13px] ml-2" style={{ color: themeColor }}>
-            Request a Company
-        </Text>
-    </Pressable>
-)}
+                            <Pressable
+                                onPress={handleOpenModal}
+                                className="mt-3 flex-row items-center justify-center rounded-2xl py-3 px-4"
+                                style={{ backgroundColor: withAlpha(themeColor, '15') }}
+                            >
+                                <Send color={themeColor} size={16} strokeWidth={2} />
+                                <Text className="font-bold text-[13px] ml-2" style={{ color: themeColor }}>
+                                    Request a Company
+                                </Text>
+                            </Pressable>
+                        )}
                     </Card>
                 </Animated.View>
             </ScrollView>
@@ -412,6 +512,152 @@ export default function Home() {
                                     </>
                                 )}
                             </Pressable>
+                        </View>
+                    </View>
+                </KeyboardAvoidingView>
+            </Modal>
+
+            {/* Request Schedule Modal */}
+            <Modal visible={isScheduleModalOpen} animationType="slide" transparent statusBarTranslucent onRequestClose={() => setIsScheduleModalOpen(false)}>
+                <KeyboardAvoidingView
+                    behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                    className="flex-1"
+                >
+                    <View className="flex-1 justify-end">
+                        <Pressable
+                            className="absolute inset-0 bg-black/50"
+                            onPress={() => setIsScheduleModalOpen(false)}
+                        />
+                        <View className="bg-white rounded-t-3xl p-6" style={{ maxHeight: '80%' }}>
+                            <ScrollView showsVerticalScrollIndicator={false}>
+                                <View className="flex-row justify-between items-center mb-4">
+                                    <Text className="text-lg font-bold text-slate-900">Request Schedule</Text>
+                                    <Pressable onPress={() => setIsScheduleModalOpen(false)} className="p-1">
+                                        <X size={20} color="#64748B" />
+                                    </Pressable>
+                                </View>
+
+                                <Text className="text-xs text-slate-500 mb-4 leading-5">
+                                    Propose a new schedule for your internship. This will be sent to your coordinator for approval.
+                                </Text>
+
+                                <View className="mb-4">
+                                    <Text className="text-xs font-semibold text-slate-700 mb-1">Start Date (YYYY-MM-DD)*</Text>
+                                    <Pressable
+                                        onPress={() => setShowDatePicker(true)}
+                                        className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3"
+                                    >
+                                        <Text className={reqStartDate ? "text-slate-800 text-sm" : "text-[#94A3B8] text-sm"}>
+                                            {reqStartDate || 'Select a date'}
+                                        </Text>
+                                    </Pressable>
+                                    {showDatePicker && (
+                                        <DateTimePicker
+                                            value={reqStartDate ? new Date(reqStartDate) : new Date()}
+                                            mode="date"
+                                            display="default"
+                                            onChange={onDateChange}
+                                        />
+                                    )}
+                                </View>
+
+                                <View className="flex-row mb-4">
+                                    <View className="flex-1 mr-2">
+                                        <Text className="text-xs font-semibold text-slate-700 mb-1">Time In*</Text>
+                                        <Pressable
+                                            onPress={() => setShowTimeInPicker(true)}
+                                            className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3"
+                                        >
+                                            <Text className={reqTimeIn ? "text-slate-800 text-sm" : "text-[#94A3B8] text-sm"}>
+                                                {reqTimeIn ? formatTimeDisplay(reqTimeIn) : 'Select time'}
+                                            </Text>
+                                        </Pressable>
+                                        {showTimeInPicker && (
+                                            <DateTimePicker
+                                                value={new Date()}
+                                                mode="time"
+                                                is24Hour
+                                                display="default"
+                                                onChange={onTimeInChange}
+                                            />
+                                        )}
+                                    </View>
+                                    <View className="flex-1 ml-2">
+                                        <Text className="text-xs font-semibold text-slate-700 mb-1">Time Out*</Text>
+                                        <Pressable
+                                            onPress={() => setShowTimeOutPicker(true)}
+                                            className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3"
+                                        >
+                                            <Text className={reqTimeOut ? "text-slate-800 text-sm" : "text-[#94A3B8] text-sm"}>
+                                                {reqTimeOut ? formatTimeDisplay(reqTimeOut) : 'Select time'}
+                                            </Text>
+                                        </Pressable>
+                                        {showTimeOutPicker && (
+                                            <DateTimePicker
+                                                value={new Date()}
+                                                mode="time"
+                                                is24Hour
+                                                display="default"
+                                                onChange={onTimeOutChange}
+                                            />
+                                        )}
+                                    </View>
+                                </View>
+
+                                <View className="flex-row mb-4">
+                                    <View className="flex-1 mr-2">
+                                        <Text className="text-xs font-semibold text-slate-700 mb-1">Hours/Day</Text>
+                                        <TextInput
+                                            className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-800 text-sm"
+                                            placeholder="e.g. 8"
+                                            placeholderTextColor="#94A3B8"
+                                            keyboardType="numeric"
+                                            value={reqHoursPerDay}
+                                            onChangeText={setReqHoursPerDay}
+                                        />
+                                    </View>
+                                    <View className="flex-1 ml-2">
+                                        <Text className="text-xs font-semibold text-slate-700 mb-1">Days/Week</Text>
+                                        <TextInput
+                                            className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-800 text-sm"
+                                            placeholder="e.g. 5"
+                                            placeholderTextColor="#94A3B8"
+                                            keyboardType="numeric"
+                                            value={reqDaysPerWeek}
+                                            onChangeText={setReqDaysPerWeek}
+                                        />
+                                    </View>
+                                </View>
+
+                                <View className="mb-6">
+                                    <Text className="text-xs font-semibold text-slate-700 mb-1">Reason (Optional)</Text>
+                                    <TextInput
+                                        className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-800 text-sm"
+                                        placeholder="Reason for schedule request..."
+                                        placeholderTextColor="#94A3B8"
+                                        value={reqReason}
+                                        onChangeText={setReqReason}
+                                        multiline
+                                        numberOfLines={2}
+                                    />
+                                </View>
+
+                                <Pressable
+                                    onPress={handleScheduleSubmit}
+                                    disabled={isSubmittingSchedule}
+                                    className="rounded-2xl py-3.5 items-center justify-center flex-row"
+                                    style={{ backgroundColor: themeColor, opacity: isSubmittingSchedule ? 0.7 : 1 }}
+                                >
+                                    {isSubmittingSchedule ? (
+                                        <ActivityIndicator color="#fff" />
+                                    ) : (
+                                        <>
+                                            <Send color="#fff" size={16} />
+                                            <Text className="text-white font-bold text-sm ml-2">Submit Schedule Request</Text>
+                                        </>
+                                    )}
+                                </Pressable>
+                            </ScrollView>
                         </View>
                     </View>
                 </KeyboardAvoidingView>

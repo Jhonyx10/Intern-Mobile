@@ -73,3 +73,21 @@ export const useRequestCompany = () => {
         },
     });
 };
+
+export interface ScheduleRequestPayload {
+    start_date: string;
+    time_in: string;
+    time_out: string;
+    hours_per_day?: number | null;
+    days_per_week?: number | null;
+    reason?: string | null;
+}
+
+export const useRequestSchedule = () => {
+    return useMutation({
+        mutationFn: async (payload: ScheduleRequestPayload) => {
+            const { data } = await api.post('/intern/schedule/request', payload);
+            return data;
+        },
+    });
+};

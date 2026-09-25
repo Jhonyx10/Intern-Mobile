@@ -76,3 +76,4 @@ yarn-error.log
 
 #app environment file
 .env
+api.ts

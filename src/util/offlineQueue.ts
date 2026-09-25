@@ -23,7 +23,17 @@ export const getOfflineQueue = async () => {
     }
 };
 
-export const syncOfflineQueue = async (timePunchMutation: Function) => {
+/**
+ * @param timePunchMutation The React Query mutation function.
+ * @param onRecordDropped Optional callback fired for each record that the
+ *        server permanently rejected (e.g. auto-closed shift, already open
+ *        log, face mismatch) so the caller can inform the intern instead of
+ *        the sync failing silently in the background.
+ */
+export const syncOfflineQueue = async (
+    timePunchMutation: Function,
+    onRecordDropped?: (record: any, message: string) => void,
+) => {
     try {
         const netState = await NetInfo.fetch();
         if (!netState.isConnected) return;
@@ -44,17 +54,32 @@ export const syncOfflineQueue = async (timePunchMutation: Function) => {
                     image: record.image,
                     latitude: record.latitude,
                     longitude: record.longitude,
+                    timestamp: record.timestamp,
                 });
-            } catch (e) {
-                // If an individual record fails, keep it in the queue
+            } catch (e: any) {
+                // A response means the server was reached and permanently
+                // rejected this record (already open, auto-closed, face
+                // mismatch, validation, etc.) — retrying won't change the
+                // outcome, so drop it instead of retrying forever.
+                if (e?.response?.status) {
+                    const msg =
+                        e.response?.data?.message ??
+                        'A saved offline punch could not be synced and was discarded.';
+                    console.warn(`Discarding offline record (server rejected): ${msg}`, record);
+                    onRecordDropped?.(record, msg);
+                    continue;
+                }
+
+                // No response at all — genuine network/server-unreachable
+                // failure, worth retrying on the next sync attempt.
                 remainingQueue.push(record);
             }
         }
 
-        // Update queue: empty if all succeeded, or keep remaining failures
+        // Update queue: empty if all succeeded/were dropped, or keep remaining network failures
         if (remainingQueue.length === 0) {
             await AsyncStorage.removeItem(QUEUE_STORAGE_KEY);
-            console.log('All offline attendance records synced successfully!');
+            console.log('Offline attendance queue processed — nothing left to retry.');
         } else {
             await AsyncStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(remainingQueue));
         }

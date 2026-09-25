@@ -93,6 +93,9 @@ const FaceEnrollModal = React.memo(({
     }, [visible]);
 
     const resetChallenge = useCallback(() => {
+        // #region agent log
+        fetch('http://127.0.0.1:7585/ingest/ae4376a8-64c4-46b6-89b6-3628f95e1f3b',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'566d31'},body:JSON.stringify({sessionId:'566d31',runId:'pre-fix',hypothesisId:'B',location:'FaceEnrollModal.tsx:resetChallenge',message:'challenge reset (timeout)',data:{prevBlinkCount:blinkCountRef.current,elapsedMs:challengeStart.current?Date.now()-challengeStart.current:null},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
         blinkCountRef.current = 0;
         eyeState.current = 'INITIAL';
         interBlinkDeadline.current = null;
@@ -101,6 +104,9 @@ const FaceEnrollModal = React.memo(({
         setTimedOut(true);
         setTimeout(() => setTimedOut(false), 1500);
     }, []);
+
+    // Throttle noisy face-detector samples so we still see eye probs / face count
+    const lastFaceSampleLog = useRef(0);
 
     // Stable callback: reads everything it needs from refs, so it never
     // needs to be recreated, and the object below stays referentially equal.
@@ -131,6 +137,13 @@ const FaceEnrollModal = React.memo(({
             const left = face.leftEyeOpenProbability;
             const right = face.rightEyeOpenProbability;
 
+            // #region agent log
+            if (now - lastFaceSampleLog.current > 2000) {
+                lastFaceSampleLog.current = now;
+                fetch('http://127.0.0.1:7585/ingest/ae4376a8-64c4-46b6-89b6-3628f95e1f3b',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'566d31'},body:JSON.stringify({sessionId:'566d31',runId:'pre-fix',hypothesisId:'A',location:'FaceEnrollModal.tsx:onFacesDetected',message:'face sample',data:{faceCount:faces.length,left,right,eyeState:eyeState.current,blinkCount:blinkCountRef.current,hasEyeProbs:left!==undefined&&right!==undefined},timestamp:Date.now()})}).catch(()=>{});
+            }
+            // #endregion
+
             if (left !== undefined && right !== undefined) {
                 if (left > 0.5 && right > 0.5 && eyeState.current === 'INITIAL') {
                     eyeState.current = 'OPEN';
@@ -144,12 +157,25 @@ const FaceEnrollModal = React.memo(({
                         interBlinkDeadline.current = now + INTER_BLINK_TIMEOUT_MS;
                     }
                     setBlinkCount(newCount);
+                    // #region agent log
+                    fetch('http://127.0.0.1:7585/ingest/ae4376a8-64c4-46b6-89b6-3628f95e1f3b',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'566d31'},body:JSON.stringify({sessionId:'566d31',runId:'pre-fix',hypothesisId:'A',location:'FaceEnrollModal.tsx:blink',message:'blink counted',data:{newCount,left,right},timestamp:Date.now()})}).catch(()=>{});
+                    // #endregion
                 }
             }
+        } else {
+            // #region agent log
+            if (now - lastFaceSampleLog.current > 2000) {
+                lastFaceSampleLog.current = now;
+                fetch('http://127.0.0.1:7585/ingest/ae4376a8-64c4-46b6-89b6-3628f95e1f3b',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'566d31'},body:JSON.stringify({sessionId:'566d31',runId:'pre-fix',hypothesisId:'A',location:'FaceEnrollModal.tsx:onFacesDetected',message:'unexpected face count',data:{faceCount:faces.length,blinkCount:blinkCountRef.current},timestamp:Date.now()})}).catch(()=>{});
+            }
+            // #endregion
         }
     }, [resetChallenge]);
 
     const onFaceDetectorError = useCallback((error: unknown) => {
+        // #region agent log
+        fetch('http://127.0.0.1:7585/ingest/ae4376a8-64c4-46b6-89b6-3628f95e1f3b',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'566d31'},body:JSON.stringify({sessionId:'566d31',runId:'pre-fix',hypothesisId:'A',location:'FaceEnrollModal.tsx:onFaceDetectorError',message:'face detector error',data:{error:String(error)},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
         console.error('Face detector error:', error);
     }, []);
 
@@ -173,19 +199,31 @@ const FaceEnrollModal = React.memo(({
     const cameraStyle = useMemo(() => ({ flex: 1 }), []);
 
     const handleCapture = async () => {
+        // #region agent log
+        fetch('http://127.0.0.1:7585/ingest/ae4376a8-64c4-46b6-89b6-3628f95e1f3b',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'566d31'},body:JSON.stringify({sessionId:'566d31',runId:'pre-fix',hypothesisId:'C',location:'FaceEnrollModal.tsx:handleCapture',message:'capture pressed',data:{isVerified,isCapturing:isCapturing.current,hasPermission,blinkCount},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
         if (!isVerified || isCapturing.current) return;
         isCapturing.current = true;
         try {
             if (!hasPermission) {
                 await requestPermission();
+                // #region agent log
+                fetch('http://127.0.0.1:7585/ingest/ae4376a8-64c4-46b6-89b6-3628f95e1f3b',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'566d31'},body:JSON.stringify({sessionId:'566d31',runId:'pre-fix',hypothesisId:'D',location:'FaceEnrollModal.tsx:handleCapture',message:'capture aborted: no permission',data:{},timestamp:Date.now()})}).catch(()=>{});
+                // #endregion
                 return;
             }
             const photo = await photoOutput.capturePhotoToFile({}, {});
+            // #region agent log
+            fetch('http://127.0.0.1:7585/ingest/ae4376a8-64c4-46b6-89b6-3628f95e1f3b',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'566d31'},body:JSON.stringify({sessionId:'566d31',runId:'pre-fix',hypothesisId:'C',location:'FaceEnrollModal.tsx:handleCapture',message:'capture result',data:{hasPhoto:!!photo,filePath:photo?.filePath??null},timestamp:Date.now()})}).catch(()=>{});
+            // #endregion
             if (photo && photo.filePath) {
                 const uri = `file://${photo.filePath}`;
                 await onEnroll(uri);
             }
         } catch (e: any) {
+            // #region agent log
+            fetch('http://127.0.0.1:7585/ingest/ae4376a8-64c4-46b6-89b6-3628f95e1f3b',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'566d31'},body:JSON.stringify({sessionId:'566d31',runId:'pre-fix',hypothesisId:'D',location:'FaceEnrollModal.tsx:handleCapture',message:'capture threw',data:{error:e?.message||String(e)},timestamp:Date.now()})}).catch(()=>{});
+            // #endregion
             Alert.alert('Camera Error', 'Could not capture photo. Please try again.\n' + (e?.message || ''));
         } finally {
             isCapturing.current = false;

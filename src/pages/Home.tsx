@@ -1,4 +1,4 @@
-import { Text, View, ActivityIndicator, ScrollView, Pressable, Modal, TextInput, Alert, KeyboardAvoidingView, Platform, PermissionsAndroid } from 'react-native';
+import { Text, View, ActivityIndicator, ScrollView, Pressable, Modal, TextInput, KeyboardAvoidingView, Platform, PermissionsAndroid } from 'react-native';
 import { useState } from 'react';
 import { Building2, Clock, CalendarDays, TrendingUp, Send, X, MapPin } from 'lucide-react-native';
 import LinearGradient from 'react-native-linear-gradient';
@@ -7,6 +7,7 @@ import Geolocation from '@react-native-community/geolocation';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useDashboard, useRequestCompany, useRequestSchedule } from '../util/queries/dashboard';
 import { useUser } from '../util/queries/auth';
+import { useToast } from '../components/ToastProvider';
 
 function withAlpha(hex: string, alpha: string) {
     return `${hex}${alpha}`;
@@ -129,6 +130,7 @@ export default function Home() {
     const { data: userData } = useUser();
     const { mutateAsync: requestCompany, isPending: isSubmittingRequest } = useRequestCompany();
     const { mutateAsync: requestSchedule, isPending: isSubmittingSchedule } = useRequestSchedule();
+    const { showToast } = useToast();
     const themeColor = userData?.settings?.theme_color || '#1D4ED8';
 
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -233,14 +235,17 @@ export default function Home() {
 
     const handleRequestSubmit = async () => {
         if (!companyName.trim() || !companyAddress.trim()) {
-            Alert.alert('Missing Fields', 'Please enter both the company name and address.');
+             showToast(
+               'Please enter both the company name and address.',
+               'error',
+             );
             return;
         }
 
         if (latitude === null || longitude === null) {
-            Alert.alert(
-                'Acquiring Location',
-                'We are still getting your precise coordinates. Please wait a moment and try submitting again.'
+            showToast(
+              'Still getting your precise location. Please wait a moment and try again.',
+              'info',
             );
             return;
         }
@@ -258,17 +263,23 @@ export default function Home() {
             setCompanyAddress('');
             setLatitude(null);
             setLongitude(null);
-            Alert.alert('Request Sent ✅', 'Your company request has been submitted to your coordinator for approval.');
+            showToast(
+              'Company request submitted to your coordinator.',
+              'success',
+            );
             refetch();
         } catch (e: any) {
             const msg = e?.response?.data?.message || 'Failed to submit company request. Please try again.';
-            Alert.alert('Error', msg);
+            showToast(msg, 'error');
         }
     };
 
     const handleScheduleSubmit = async () => {
         if (!reqStartDate.trim() || !reqTimeIn.trim() || !reqTimeOut.trim()) {
-            Alert.alert('Missing Fields', 'Please enter Start Date, Time In, and Time Out as they are required.');
+           showToast(
+             'Please enter Start Date, Time In, and Time Out.',
+             'error',
+           );
             return;
         }
 
@@ -289,11 +300,14 @@ export default function Home() {
             setReqHoursPerDay('');
             setReqDaysPerWeek('');
             setReqReason('');
-            Alert.alert('Request Sent ✅', 'Your schedule request has been submitted to your coordinator.');
+           showToast(
+             'Schedule request submitted to your coordinator.',
+             'success',
+           );
             refetch();
         } catch (e: any) {
             const msg = e?.response?.data?.message || 'Failed to submit schedule request. Please try again.';
-            Alert.alert('Error', msg);
+             showToast(msg, 'error');
         }
     };
 
@@ -411,7 +425,7 @@ export default function Home() {
                         <InfoRow icon={CalendarDays} label="Days per Week" value={progress?.schedule ? `${progress.schedule.days_per_week} days/week` : 'Not assigned'} themeColor={themeColor} />
                         <InfoRow icon={TrendingUp} label="Est. Completion" value={progress?.estimated_end_date ? `${progress.estimated_end_date}${progress.estimated_end_is_approximate ? ' (approx.)' : ''}` : 'N/A'} themeColor={themeColor} />
 
-                        {!isUnassigned && !isRemoved && !progress?.schedule && (
+                        {!isUnassigned && !isRemoved && progress?.schedule?.source !== 'approved_ojt_schedule' && (
                             <Pressable
                                 onPress={() => setIsScheduleModalOpen(true)}
                                 className="mt-3 flex-row items-center justify-center rounded-2xl py-3 px-4"
@@ -422,17 +436,6 @@ export default function Home() {
                                     Request Schedule
                                 </Text>
                             </Pressable>
-                        )}
-
-                        {!isUnassigned && !isRemoved && progress?.schedule && (
-                            <View
-                                className="mt-3 flex-row items-center justify-center rounded-2xl py-3 px-4"
-                                style={{ backgroundColor: withAlpha('#16A34A', '12') }}
-                            >
-                                <Text className="font-bold text-[13px]" style={{ color: '#16A34A' }}>
-                                    ✓ Schedule Approved
-                                </Text>
-                            </View>
                         )}
                     </Card>
                 </Animated.View>

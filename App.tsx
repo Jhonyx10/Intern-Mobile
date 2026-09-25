@@ -14,6 +14,9 @@ import {
 } from 'react-native-safe-area-context';
 import Navigation from './src/components/Navigation';
 import { useGeoFenceListeners } from './src/util/hooks/useGeoFenceMonitor';
+import { useAuth } from './src/util/queries/auth';
+import { useFcmListener } from './src/util/hooks/useFcmListener';
+import { useFcmRegistration } from './src/util/hooks/useFcmRegistration';
 import { ToastProvider } from './src/components/ToastProvider';
 import "./global.css";
 
@@ -46,7 +49,10 @@ function App() {
 }
 
 function AppContent() {
+  const { data: token } = useAuth();
   useGeoFenceListeners();
+  useFcmListener();
+  useFcmRegistration(Boolean(token));
 
   return (
     <View style={styles.container}>

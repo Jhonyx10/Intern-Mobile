@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, Pressable, ScrollView, ActivityIndicator, Alert, Image } from 'react-native';
+import { View, Text, TextInput, Pressable, ScrollView, ActivityIndicator, Image } from 'react-native';
 import { RouteProp, useRoute, useNavigation } from '@react-navigation/native';
 import { RootStackParamList } from '../components/Navigation';
 import { useTaskUpdate } from '../util/queries/timelog';
 import { pick, types } from '@react-native-documents/picker';
 import { X, UploadCloud, CheckCircle2 } from 'lucide-react-native';
 import { useUser } from '../util/queries/auth';
+import { useToast } from '../components/ToastProvider';
 
 type UpdateTaskScreenRouteProp = RouteProp<RootStackParamList, 'UpdateTask'>;
 
@@ -13,7 +14,7 @@ export default function UpdateTaskScreen() {
     const route = useRoute<UpdateTaskScreenRouteProp>();
     const navigation = useNavigation();
     const { timeLogId } = route.params;
-
+    const { showToast } = useToast();
     const { data: userData } = useUser();
     const themeColor = userData?.settings?.theme_color || '#1D4ED8';
 
@@ -32,14 +33,20 @@ export default function UpdateTaskScreen() {
 
             if (res && res.length > 0) {
                 if (selectedPhotos.length + res.length > 10) {
-                    Alert.alert('Limit Exceeded', 'You can only upload up to 10 photos total.');
+                   showToast(
+                     'You can only upload up to 10 photos total.',
+                     'error',
+                   );
                     return;
                 }
                 setSelectedPhotos([...selectedPhotos, ...res]);
             }
         } catch (err: any) {
             if (err?.code !== 'OPERATION_CANCELED') {
-                Alert.alert('Error', err?.message || 'Failed to open photo picker');
+               showToast(
+                 err?.message || 'Failed to open photo picker',
+                 'error',
+               );
             }
         }
     };
@@ -52,7 +59,7 @@ export default function UpdateTaskScreen() {
 
     const handleSave = async () => {
         if (!note && selectedPhotos.length === 0) {
-            Alert.alert('Validation Check', 'Please enter a note or select photos.');
+            showToast('Please enter a note or select photos.', 'error');
             return;
         }
 
@@ -62,10 +69,15 @@ export default function UpdateTaskScreen() {
                 note: note.trim() !== '' ? note.trim() : null,
                 photos: selectedPhotos.map(p => ({ uri: p.uri, name: p.name, type: p.type || 'image/jpeg' })),
             });
-            Alert.alert('Success', 'Task note and photos updated successfully.');
+            showToast('Task note and photos updated successfully.', 'success');
             navigation.goBack();
         } catch (err: any) {
-            Alert.alert('Update Failed', err?.response?.data?.message || err.message || 'Failed to update task');
+            showToast(
+              err?.response?.data?.message ||
+                err.message ||
+                'Failed to update task',
+              'error',
+            );
         }
     };
 

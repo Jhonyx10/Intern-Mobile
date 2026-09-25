@@ -37,6 +37,7 @@ import {
   useDocuments,
   downloadDocumentFile,
 } from '../util/queries/documents';
+import { useToast } from '../components/ToastProvider';
 
 function withAlpha(hex: string, alpha: string) {
   return `${hex}${alpha}`;
@@ -108,7 +109,7 @@ function formatPeriodLabel(periodStart: string, recurrence?: Recurrence) {
 export const Documents = () => {
   const { data: userData } = useUser();
   const themeColor = userData?.settings?.theme_color || '#1D4ED8';
-
+  const { showToast } = useToast();
   const { data: fetchedDocs } = useDocuments();
   const allDocs: DocumentItem[] = fetchedDocs || [];
 
@@ -544,9 +545,9 @@ export const Documents = () => {
                 }}
                 onError={(error: any) => {
                   console.log('PDF Error:', error);
-                  Alert.alert(
-                    'Preview Error',
-                    `Could not render cached PDF: ` + (error?.message || error),
+                  showToast(
+                    `Could not render cached PDF: ${error?.message || error}`,
+                    'error',
                   );
                 }}
               />

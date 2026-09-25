@@ -10,6 +10,7 @@ import {
 } from 'react-native-vision-camera';
 import { useFaceDetectorOutput } from 'react-native-vision-camera-face-detector';
 import { ScanFace, X } from 'lucide-react-native';
+import { useToast } from '../ToastProvider'
 
 const REQUIRED_BLINKS = 2;
 const WARMUP_MS = 1000;            // ignore blinks while camera/face settle in
@@ -53,7 +54,7 @@ const FaceEnrollModal = React.memo(({
     const [blinkCount, setBlinkCount] = useState(0);
     const [readyForChallenge, setReadyForChallenge] = useState(false);
     const [timedOut, setTimedOut] = useState(false);
-
+    const { showToast } = useToast();
     // Refs mirror the state above so the face-detector callback always reads
     // the latest value without needing to be recreated every render.
     const blinkCountRef = useRef(0);
@@ -224,7 +225,12 @@ const FaceEnrollModal = React.memo(({
             // #region agent log
             fetch('http://127.0.0.1:7585/ingest/ae4376a8-64c4-46b6-89b6-3628f95e1f3b',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'566d31'},body:JSON.stringify({sessionId:'566d31',runId:'pre-fix',hypothesisId:'D',location:'FaceEnrollModal.tsx:handleCapture',message:'capture threw',data:{error:e?.message||String(e)},timestamp:Date.now()})}).catch(()=>{});
             // #endregion
-            Alert.alert('Camera Error', 'Could not capture photo. Please try again.\n' + (e?.message || ''));
+            showToast(
+              `Could not capture photo. Please try again. ${
+                e?.message || ''
+              }`.trim(),
+              'error',
+            );
         } finally {
             isCapturing.current = false;
         }
@@ -261,10 +267,16 @@ const FaceEnrollModal = React.memo(({
                                 try {
                                     const result = await requestPermission();
                                     if (!result) {
-                                        Alert.alert('Permission Denied', 'Please go to your device settings to enable the camera.');
+                                        showToast(
+                                          'Please go to your device settings to enable the camera.',
+                                          'error',
+                                        );
                                     }
                                 } catch (e) {
-                                    Alert.alert('Error', 'Failed to request camera permission.');
+                                    showToast(
+                                      'Failed to request camera permission.',
+                                      'error',
+                                    );
                                 }
                             }}
                             className="mt-6 px-6 py-3 rounded-full"

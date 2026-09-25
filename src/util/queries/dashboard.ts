@@ -7,6 +7,7 @@ interface DashboardSchedule {
     time_in: string;
     time_out: string;
     start_date: string;
+    source?: 'approved_ojt_schedule' | 'company_schedule';
 }
 
 interface DashboardProgress {

@@ -5,7 +5,6 @@ import {
   ScrollView,
   ActivityIndicator,
   Pressable,
-  Alert,
 } from 'react-native';
 import Animated, { FadeInUp, FadeInDown } from 'react-native-reanimated';
 import {
@@ -784,7 +783,7 @@ const handlePunch = async (
               setReasonModalVisible(false);
               setSelectedExcursionId(null);
             } catch (e) {
-              Alert.alert('Error', 'Failed to submit reason.');
+             showToast('Failed to submit reason.', 'error');
             }
           }
         }}

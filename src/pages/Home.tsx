@@ -411,7 +411,7 @@ export default function Home() {
                         <InfoRow icon={CalendarDays} label="Days per Week" value={progress?.schedule ? `${progress.schedule.days_per_week} days/week` : 'Not assigned'} themeColor={themeColor} />
                         <InfoRow icon={TrendingUp} label="Est. Completion" value={progress?.estimated_end_date ? `${progress.estimated_end_date}${progress.estimated_end_is_approximate ? ' (approx.)' : ''}` : 'N/A'} themeColor={themeColor} />
 
-                        {!isUnassigned && !isRemoved && (
+                        {!isUnassigned && !isRemoved && !progress?.schedule && (
                             <Pressable
                                 onPress={() => setIsScheduleModalOpen(true)}
                                 className="mt-3 flex-row items-center justify-center rounded-2xl py-3 px-4"
@@ -422,6 +422,17 @@ export default function Home() {
                                     Request Schedule
                                 </Text>
                             </Pressable>
+                        )}
+
+                        {!isUnassigned && !isRemoved && progress?.schedule && (
+                            <View
+                                className="mt-3 flex-row items-center justify-center rounded-2xl py-3 px-4"
+                                style={{ backgroundColor: withAlpha('#16A34A', '12') }}
+                            >
+                                <Text className="font-bold text-[13px]" style={{ color: '#16A34A' }}>
+                                    ✓ Schedule Approved
+                                </Text>
+                            </View>
                         )}
                     </Card>
                 </Animated.View>

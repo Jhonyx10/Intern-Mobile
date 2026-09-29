@@ -1,14 +1,14 @@
 import { useState } from 'react';
 import {
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
-  PermissionsAndroid,
-  Pressable,
-  ScrollView,
-  Text,
-  TextInput,
-  View,
+    ActivityIndicator,
+    KeyboardAvoidingView,
+    Platform,
+    PermissionsAndroid,
+    Pressable,
+    ScrollView,
+    Text,
+    TextInput,
+    View,
 } from 'react-native';
 import Animated, {
     FadeIn,
@@ -19,6 +19,9 @@ import Animated, {
 import { Logo } from '../images/Logo';
 import { useLogin } from '../util/queries/auth';
 import { getMessaging, getToken, requestPermission, AuthorizationStatus } from '@react-native-firebase/messaging';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { RootStackParamList } from '../components/Navigation';
 
 export default function Index() {
     const [studentNumber, setStudentNumber] = useState('');
@@ -28,6 +31,7 @@ export default function Index() {
     const [error, setError] = useState<string | null>(null);
 
     const { mutateAsync: login } = useLogin();
+    const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
     const requestNotificationPermission = async () => {
         if (Platform.OS === 'android' && Platform.Version >= 33) {
@@ -51,11 +55,11 @@ export default function Index() {
         try {
             let fcm_token = undefined;
             try {
-                 const hasPermission = await requestNotificationPermission();
-                 if (!hasPermission) {
-                   console.log('User denied notification permission');
-                 }
-                 
+                const hasPermission = await requestNotificationPermission();
+                if (!hasPermission) {
+                    console.log('User denied notification permission');
+                }
+
                 const messagingInst = getMessaging();
                 const authStatus = await requestPermission(messagingInst);
 
@@ -87,7 +91,7 @@ export default function Index() {
     return (
         <KeyboardAvoidingView
             className="flex-1 bg-blue-700"
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
             <ScrollView
                 contentContainerStyle={{ flexGrow: 1 }}
@@ -226,6 +230,7 @@ export default function Index() {
                                 </View>
 
                                 <Pressable
+                                    onPress={() => navigation.navigate('ForgotPassword')}
                                     className="mt-2.5 self-end"
                                     hitSlop={8}
                                     disabled={isSubmitting}

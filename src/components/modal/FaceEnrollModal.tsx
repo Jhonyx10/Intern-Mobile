@@ -50,7 +50,8 @@ const FaceEnrollModal = React.memo(({
     );
     const photoOutput = usePhotoOutput(photoOutputConfig);
     const isCapturing = useRef(false);
-
+    const sleep = (ms: number) =>
+      new Promise<void>(resolve => setTimeout(resolve, ms));
     const [blinkCount, setBlinkCount] = useState(0);
     const [readyForChallenge, setReadyForChallenge] = useState(false);
     const [timedOut, setTimedOut] = useState(false);
@@ -62,7 +63,8 @@ const FaceEnrollModal = React.memo(({
     const eyeState = useRef<'INITIAL' | 'OPEN' | 'CLOSED'>('INITIAL');
     const interBlinkDeadline = useRef<number | null>(null);
     const challengeStart = useRef<number | null>(null);
-
+    const onEnrollRef = useRef(onEnroll);
+    onEnrollRef.current = onEnroll;
     const isVerified = blinkCount >= REQUIRED_BLINKS;
 
     useEffect(() => {
@@ -199,42 +201,41 @@ const FaceEnrollModal = React.memo(({
     );
     const cameraStyle = useMemo(() => ({ flex: 1 }), []);
 
-    const handleCapture = async () => {
-        // #region agent log
-        fetch('http://127.0.0.1:7585/ingest/ae4376a8-64c4-46b6-89b6-3628f95e1f3b',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'566d31'},body:JSON.stringify({sessionId:'566d31',runId:'pre-fix',hypothesisId:'C',location:'FaceEnrollModal.tsx:handleCapture',message:'capture pressed',data:{isVerified,isCapturing:isCapturing.current,hasPermission,blinkCount},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
-        if (!isVerified || isCapturing.current) return;
-        isCapturing.current = true;
-        try {
-            if (!hasPermission) {
-                await requestPermission();
-                // #region agent log
-                fetch('http://127.0.0.1:7585/ingest/ae4376a8-64c4-46b6-89b6-3628f95e1f3b',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'566d31'},body:JSON.stringify({sessionId:'566d31',runId:'pre-fix',hypothesisId:'D',location:'FaceEnrollModal.tsx:handleCapture',message:'capture aborted: no permission',data:{},timestamp:Date.now()})}).catch(()=>{});
-                // #endregion
-                return;
-            }
-            const photo = await photoOutput.capturePhotoToFile({}, {});
-            // #region agent log
-            fetch('http://127.0.0.1:7585/ingest/ae4376a8-64c4-46b6-89b6-3628f95e1f3b',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'566d31'},body:JSON.stringify({sessionId:'566d31',runId:'pre-fix',hypothesisId:'C',location:'FaceEnrollModal.tsx:handleCapture',message:'capture result',data:{hasPhoto:!!photo,filePath:photo?.filePath??null},timestamp:Date.now()})}).catch(()=>{});
-            // #endregion
-            if (photo && photo.filePath) {
-                const uri = `file://${photo.filePath}`;
-                await onEnroll(uri);
-            }
-        } catch (e: any) {
-            // #region agent log
-            fetch('http://127.0.0.1:7585/ingest/ae4376a8-64c4-46b6-89b6-3628f95e1f3b',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'566d31'},body:JSON.stringify({sessionId:'566d31',runId:'pre-fix',hypothesisId:'D',location:'FaceEnrollModal.tsx:handleCapture',message:'capture threw',data:{error:e?.message||String(e)},timestamp:Date.now()})}).catch(()=>{});
-            // #endregion
-            showToast(
-              `Could not capture photo. Please try again. ${
-                e?.message || ''
-              }`.trim(),
-              'error',
-            );
-        } finally {
-            isCapturing.current = false;
-        }
-    };
+const handleCapture = async () => {
+  if (!isVerified || isCapturing.current) return;
+  isCapturing.current = true;
+  try {
+    if (!hasPermission) {
+      await requestPermission();
+      return;
+    }
+
+    // Retry once: if the session was mid-reconfigure, the first attempt
+    // can fail with "Camera is closed". Only the capture is retried,
+    // never the upload.
+    let photo;
+    try {
+      photo = await photoOutput.capturePhotoToFile({}, {});
+    } catch (firstErr) {
+      console.warn('Capture failed, retrying once:', firstErr);
+      await sleep(900);
+      photo = await photoOutput.capturePhotoToFile({}, {});
+    }
+
+    if (photo && photo.filePath) {
+      const uri = `file://${photo.filePath}`;
+      await onEnrollRef.current(uri); // latest callback, not the stale one
+    }
+  } catch (e: any) {
+    console.warn('Capture threw:', e?.message || e);
+    showToast(
+      `Could not capture photo. Please try again. ${e?.message || ''}`.trim(),
+      'error',
+    );
+  } finally {
+    isCapturing.current = false;
+  }
+};
 
     const statusText = !readyForChallenge
         ? 'Getting ready...'

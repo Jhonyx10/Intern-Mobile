@@ -57,6 +57,15 @@ export const useLogin = () => {
     });
 };
 
+export const useForgotPassword = () => {
+    return useMutation({
+        mutationFn: async (credentials: { student_number: string }) => {
+            const { data } = await api.post<{ message: string }>('/auth/mobile/forgot-password', credentials);
+            return data;
+        },
+    });
+};
+
 export const useLogout = () => {
     const queryClient = useQueryClient();
 

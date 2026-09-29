@@ -235,17 +235,17 @@ export default function Home() {
 
     const handleRequestSubmit = async () => {
         if (!companyName.trim() || !companyAddress.trim()) {
-             showToast(
-               'Please enter both the company name and address.',
-               'error',
-             );
+            showToast(
+                'Please enter both the company name and address.',
+                'error',
+            );
             return;
         }
 
         if (latitude === null || longitude === null) {
             showToast(
-              'Still getting your precise location. Please wait a moment and try again.',
-              'info',
+                'Still getting your precise location. Please wait a moment and try again.',
+                'info',
             );
             return;
         }
@@ -264,8 +264,8 @@ export default function Home() {
             setLatitude(null);
             setLongitude(null);
             showToast(
-              'Company request submitted to your coordinator.',
-              'success',
+                'Company request submitted to your coordinator.',
+                'success',
             );
             refetch();
         } catch (e: any) {
@@ -276,10 +276,10 @@ export default function Home() {
 
     const handleScheduleSubmit = async () => {
         if (!reqStartDate.trim() || !reqTimeIn.trim() || !reqTimeOut.trim()) {
-           showToast(
-             'Please enter Start Date, Time In, and Time Out.',
-             'error',
-           );
+            showToast(
+                'Please enter Start Date, Time In, and Time Out.',
+                'error',
+            );
             return;
         }
 
@@ -300,14 +300,14 @@ export default function Home() {
             setReqHoursPerDay('');
             setReqDaysPerWeek('');
             setReqReason('');
-           showToast(
-             'Schedule request submitted to your coordinator.',
-             'success',
-           );
+            showToast(
+                'Schedule request submitted to your coordinator.',
+                'success',
+            );
             refetch();
         } catch (e: any) {
             const msg = e?.response?.data?.message || 'Failed to submit schedule request. Please try again.';
-             showToast(msg, 'error');
+            showToast(msg, 'error');
         }
     };
 
@@ -465,7 +465,7 @@ export default function Home() {
             {/* Request Company Modal */}
             <Modal visible={isModalOpen} animationType="slide" transparent statusBarTranslucent onRequestClose={() => setIsModalOpen(false)}>
                 <KeyboardAvoidingView
-                    behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                    behavior={Platform.OS === 'ios' ? 'padding' : undefined}
                     className="flex-1"
                 >
                     <View className="flex-1 justify-end">
@@ -534,7 +534,7 @@ export default function Home() {
             {/* Request Schedule Modal */}
             <Modal visible={isScheduleModalOpen} animationType="slide" transparent statusBarTranslucent onRequestClose={() => setIsScheduleModalOpen(false)}>
                 <KeyboardAvoidingView
-                    behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                    behavior={Platform.OS === 'ios' ? 'padding' : undefined}
                     className="flex-1"
                 >
                     <View className="flex-1 justify-end">

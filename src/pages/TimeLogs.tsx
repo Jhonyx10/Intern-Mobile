@@ -154,7 +154,17 @@ export default function TimeLogs() {
       setCameraMode(null);
       showToast('Your face has been enrolled successfully!', 'success');
     } catch (err: any) {
-      showToast('Face enrollment failed. Please try again.', 'error');
+      console.warn(
+        'Enroll failed:',
+        err?.response?.status,
+        err?.response?.data,
+        err?.message,
+      );
+      showToast(
+        err?.response?.data?.message ??
+          'Face enrollment failed. Please try again.',
+        'error',
+      );
     }
   };
 

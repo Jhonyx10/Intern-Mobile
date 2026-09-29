@@ -13,7 +13,7 @@ import { startExcursion, addExcursionPoint, completeExcursion } from '../queries
 
 const OFFICE_GEOFENCE_ID = 'office';
 const EXCURSION_ID_KEY = '@excursion_id';
-const HEARTBEAT_INTERVAL_SECONDS = 30;
+const HEARTBEAT_INTERVAL_SECONDS = 10;
 const OUTSIDE_TOO_LONG_MS = 3 * 60 * 1000; // 3 minutes
 
 // Module-level state, mirroring the original file's approach — these hooks
@@ -75,7 +75,7 @@ function clearOutsideTimer() {
 // ─── Location helpers ────────────────────────────────────────────────────────
 
 const reportLiveLocation = async (location: Location) => {
-    if (!isPunchedIn) return; // safety net even if a stray event fires post-stop
+     if (!isPunchedIn || isInsideGeofence) return; // safety net even if a stray event fires post-stop
     try {
         await api.post('/intern/time/location', {
             latitude: location.coords.latitude,

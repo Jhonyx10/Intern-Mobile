@@ -12,6 +12,7 @@ import { MyEvaluation } from '../pages/MyEvaluation';
 import { Settings } from '../pages/Settings'
 import { TimeLogHistory } from '../pages/TimeLogHistory';
 import TimeLogDetails from '../pages/TimeLogDetails';
+import Notifications from '../pages/Notifications';
 
 export type RootStackParamList = {
   Login: undefined;
@@ -22,6 +23,7 @@ export type RootStackParamList = {
   Settings: undefined;
   TimeLogHistory: undefined;
   TimeLogDetails: { timeLogId: number };
+  Notifications: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -66,6 +68,11 @@ export default function RootNavigator() {
             <Stack.Screen
               name="TimeLogDetails"
               component={TimeLogDetails}
+              options={{ presentation: 'card' }}
+            />
+            <Stack.Screen
+              name="Notifications"
+              component={Notifications}
               options={{ presentation: 'card' }}
             />
           </Stack.Group>

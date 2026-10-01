@@ -44,17 +44,25 @@ export function useLiveLocation(pulseEnabled: boolean = false) {
         return;
       }
 
-      Geolocation.getCurrentPosition(
-        (position) => {
-          setLocationError(null);
-          setUserLocation([position.coords.longitude, position.coords.latitude]);
-        },
-        (error) => {
-          console.error('Location error:', error);
-          setLocationError('Unable to retrieve your current location. Please check that location services are enabled.');
-        },
-        { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 },
-      );
+      const getPos = (highAccuracy: boolean) => {
+        Geolocation.getCurrentPosition(
+          (position) => {
+            setLocationError(null);
+            setUserLocation([position.coords.longitude, position.coords.latitude]);
+          },
+          (error) => {
+            console.error(`Location error (highAccuracy: ${highAccuracy}):`, error);
+            if (highAccuracy) {
+              getPos(false);
+            } else {
+              setLocationError('Unable to retrieve your current location. Please check that location services are enabled.');
+            }
+          },
+          { enableHighAccuracy: highAccuracy, timeout: 10000, maximumAge: 10000 },
+        );
+      };
+
+      getPos(true);
 
       watchId = Geolocation.watchPosition(
         (position) => {

@@ -118,7 +118,7 @@ export const useEnrollFace = () => {
     return useMutation({
         mutationFn: async (payload: { image: string }) => {
             // #region agent log
-            fetch('http://127.0.0.1:7585/ingest/ae4376a8-64c4-46b6-89b6-3628f95e1f3b',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'566d31'},body:JSON.stringify({sessionId:'566d31',runId:'pre-fix',hypothesisId:'E',location:'timelog.ts:useEnrollFace',message:'POST /intern/face/enrollment start',data:{uriPrefix:String(payload.image).slice(0,40)},timestamp:Date.now()})}).catch(()=>{});
+            fetch('http://127.0.0.1:7585/ingest/ae4376a8-64c4-46b6-89b6-3628f95e1f3b', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '566d31' }, body: JSON.stringify({ sessionId: '566d31', runId: 'pre-fix', hypothesisId: 'E', location: 'timelog.ts:useEnrollFace', message: 'POST /intern/face/enrollment start', data: { uriPrefix: String(payload.image).slice(0, 40) }, timestamp: Date.now() }) }).catch(() => { });
             // #endregion
             const formData = new FormData();
             formData.append('image', {
@@ -134,12 +134,12 @@ export const useEnrollFace = () => {
                     },
                 });
                 // #region agent log
-                fetch('http://127.0.0.1:7585/ingest/ae4376a8-64c4-46b6-89b6-3628f95e1f3b',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'566d31'},body:JSON.stringify({sessionId:'566d31',runId:'pre-fix',hypothesisId:'E',location:'timelog.ts:useEnrollFace',message:'POST enrollment OK',data:{keys:data&&typeof data==='object'?Object.keys(data):typeof data},timestamp:Date.now()})}).catch(()=>{});
+                fetch('http://127.0.0.1:7585/ingest/ae4376a8-64c4-46b6-89b6-3628f95e1f3b', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '566d31' }, body: JSON.stringify({ sessionId: '566d31', runId: 'pre-fix', hypothesisId: 'E', location: 'timelog.ts:useEnrollFace', message: 'POST enrollment OK', data: { keys: data && typeof data === 'object' ? Object.keys(data) : typeof data }, timestamp: Date.now() }) }).catch(() => { });
                 // #endregion
                 return data;
             } catch (err: any) {
                 // #region agent log
-                fetch('http://127.0.0.1:7585/ingest/ae4376a8-64c4-46b6-89b6-3628f95e1f3b',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'566d31'},body:JSON.stringify({sessionId:'566d31',runId:'pre-fix',hypothesisId:'E',location:'timelog.ts:useEnrollFace',message:'POST enrollment error',data:{status:err?.response?.status??null,apiMessage:err?.response?.data?.message??err?.message??String(err)},timestamp:Date.now()})}).catch(()=>{});
+                fetch('http://127.0.0.1:7585/ingest/ae4376a8-64c4-46b6-89b6-3628f95e1f3b', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '566d31' }, body: JSON.stringify({ sessionId: '566d31', runId: 'pre-fix', hypothesisId: 'E', location: 'timelog.ts:useEnrollFace', message: 'POST enrollment error', data: { status: err?.response?.status ?? null, apiMessage: err?.response?.data?.message ?? err?.message ?? String(err) }, timestamp: Date.now() }) }).catch(() => { });
                 // #endregion
                 throw err;
             }
@@ -253,13 +253,15 @@ export const useTaskChecker = (timeLogId: number | null) => {
     });
 };
 
-export const useTimeLogsHistory = () => {
+export type TimeLogPreset = 'daily' | 'weekly' | 'monthly' | 'yearly';
+
+export const useTimeLogsHistory = (preset: TimeLogPreset = 'daily') => {
     return useInfiniteQuery({
-        queryKey: ['time_logs_history'],
+        queryKey: ['time_logs_history', preset],
         queryFn: async ({ pageParam }): Promise<TimeLogsPage> => {
             const { data } = await api.get<{ logs: TimeLogEntry[]; total_count: number }>(
                 '/intern/time/logs',
-                { params: { page: pageParam, per_page: TIME_LOGS_PER_PAGE } },
+                { params: { page: pageParam, per_page: TIME_LOGS_PER_PAGE, preset } },
             );
             return { ...data, page: pageParam };
         },

@@ -4,7 +4,7 @@ import {
     createBottomTabNavigator,
     type BottomTabBarProps,
 } from '@react-navigation/bottom-tabs';
-import { LayoutGrid as HomeIcon, User, Clock10Icon, FileText } from 'lucide-react-native';
+import { LayoutGrid as HomeIcon, User, Clock10Icon, FileText, BarChart2 } from 'lucide-react-native';
 import Animated, {
     useAnimatedStyle,
     useSharedValue,
@@ -15,7 +15,8 @@ import Animated, {
 import Home from '../pages/Home';
 import Profile from '../pages/Profile';
 import TimeLogs from '../pages/TimeLogs';
-import { Documents } from '../pages/Documents'; // using named or default depending on export
+import { Documents } from '../pages/Documents';
+import Reports from '../pages/Reports';
 import { useUser } from '../util/queries/auth';
 
 function withAlpha(hex: string, alpha: string) {
@@ -35,13 +36,15 @@ const ICONS: Record<
     Profile: User,
     TimeLogs: Clock10Icon,
     Documents: FileText,
+    Reports: BarChart2,
 };
 
 const LABELS: Record<string, string> = {
     Home: 'Home',
     Profile: 'Profile',
     TimeLogs: 'Time Logs',
-    Documents: 'Docs'
+    Documents: 'Docs',
+    Reports: 'Reports',
 };
 
 function CustomTabBar({ state, navigation }: BottomTabBarProps) {
@@ -197,6 +200,7 @@ export default function BottomTabs() {
             <Tab.Screen name="Home" component={Home} />
             <Tab.Screen name="TimeLogs" component={TimeLogs} />
             <Tab.Screen name="Documents" component={Documents} />
+            <Tab.Screen name="Reports" component={Reports} />
             <Tab.Screen name="Profile" component={Profile} />
         </Tab.Navigator>
     );

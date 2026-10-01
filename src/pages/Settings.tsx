@@ -6,6 +6,8 @@ import {
   Pressable,
   TextInput,
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import Animated, {
   FadeInUp,
@@ -209,11 +211,18 @@ export const Settings = () => {
       setNewEmail('');
       setEmailPassword('');
       setEmailExpanded(false);
-    } catch {
-      showToast(
-        'Could not update email. Check your password and try again.',
-        'error',
-      );
+    } catch (err: any) {
+      const errors = err?.response?.data?.errors;
+      if (errors?.email?.[0]) {
+        // e.g. "The email has already been taken."
+        showToast(errors.email[0], 'error');
+      } else if (errors?.current_password?.[0]) {
+        // e.g. "The current password is incorrect."
+        showToast(errors.current_password[0], 'error');
+      } else {
+        const fallback = err?.response?.data?.message;
+        showToast(fallback || 'Could not update email. Please try again.', 'error');
+      }
     }
   };
 
@@ -263,10 +272,15 @@ export const Settings = () => {
   };
 
   return (
-    <View className="flex-1" style={{ backgroundColor: '#F8FAFC' }}>
+    <KeyboardAvoidingView
+      className="flex-1"
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      style={{ backgroundColor: '#F8FAFC' }}
+    >
       <ScrollView
         contentContainerStyle={{ paddingBottom: 60 }}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
       >
         <Animated.View entering={FadeInDown.duration(400)}>
           <LinearGradient
@@ -515,8 +529,8 @@ export const Settings = () => {
             </Pressable>
           </SettingsSection>
         </View>
-      </ScrollView >
-    </View >
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 };
 

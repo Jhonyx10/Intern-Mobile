@@ -26,7 +26,6 @@ import { RootStackParamList } from '../components/Navigation';
 
 import {
   useTimeStatus,
-  useEnrollFace,
   useTimePunch,
   useTaskChecker,
 } from '../util/queries/timelog';
@@ -69,12 +68,11 @@ export default function TimeLogs() {
   const { data: serverStatus, isLoading, isError, refetch } = useTimeStatus();
   const { data: dashboard } = useDashboard();
   const { data: userData } = useUser();
-  const { mutateAsync: enrollFace, isPending: isEnrolling } = useEnrollFace();
   const { mutateAsync: timePunch, isPending: isPunching } = useTimePunch();
   const themeColor = userData?.settings?.theme_color || '#1D4ED8';
   const { startMonitoring, stopMonitoring } = useGeofenceControls();
   const [cameraMode, setCameraMode] = useState<
-    'enroll' | 'punch_in' | 'punch_out' | 'break_out' | 'break_in' | null
+    'punch_in' | 'punch_out' | 'break_out' | 'break_in' | null
   >(null);
   const [taskNoteModalVisible, setTaskNoteModalVisible] = useState(false);
   const { data: pendingExcursions } = usePendingExcursions();
@@ -148,85 +146,65 @@ export default function TimeLogs() {
       ? isPointInPolygon(userLocation, polygonCoords)
       : !isGeofenceActive;
 
-  const handleEnroll = async (imageUri: string) => {
-    try {
-      await enrollFace({ image: imageUri });
+  const handlePunch = async (
+    imageUri: string | null,
+    action: 'time_in' | 'time_out' | 'break_out' | 'break_in',
+  ) => {
+    const latitude = userLocation?.[1] ?? 0;
+    const longitude = userLocation?.[0] ?? 0;
+    const record: any = {
+      action,
+      image: imageUri,
+      latitude,
+      longitude,
+      timestamp: new Date().toISOString(),
+    };
+
+    const netState = await NetInfo.fetch();
+
+    if (!netState.isConnected) {
+      await saveToQueue(record);
       setCameraMode(null);
-      showToast('Your face has been enrolled successfully!', 'success');
-    } catch (err: any) {
-      console.warn(
-        'Enroll failed:',
-        err?.response?.status,
-        err?.response?.data,
-        err?.message,
-      );
+      setTaskNoteModalVisible(false);
       showToast(
-        err?.response?.data?.message ??
-          'Face enrollment failed. Please try again.',
+        'No internet connection. Saved locally and will sync when online.',
+        'info',
+      );
+      return;
+    }
+
+    try {
+      const res = await timePunch(record);
+      setCameraMode(null);
+      setTaskNoteModalVisible(false);
+      showToast(res?.message ?? 'Action completed successfully!', 'success');
+      syncOfflineQueue(timePunch, (record, msg) => {
+        showToast(`Offline punch (${record.action}) couldn't be synced: ${msg}`, 'error');
+      });
+    } catch (e: any) {
+      setCameraMode(null);
+      setTaskNoteModalVisible(false);
+
+      if (e?.response?.status) {
+        const msg =
+          e.response?.data?.message ??
+          'That action could not be completed. Please check the details and try again.';
+        showToast(msg, 'error');
+
+        if (action === 'time_out' && e.response.status === 422) {
+          refetch();
+        }
+        return;
+      }
+
+      // No response at all — genuine network/server-unreachable case.
+      await saveToQueue(record);
+      showToast(
+        'Server unreachable. Your punch has been saved locally.',
         'error',
       );
     }
   };
-
-const handlePunch = async (
-  imageUri: string | null,
-  action: 'time_in' | 'time_out' | 'break_out' | 'break_in',
-) => {
-  const latitude = userLocation?.[1] ?? 0;
-  const longitude = userLocation?.[0] ?? 0;
-  const record: any = {
-    action,
-    image: imageUri,
-    latitude,
-    longitude,
-    timestamp: new Date().toISOString(),
-  };
-
-  const netState = await NetInfo.fetch();
-
-  if (!netState.isConnected) {
-    await saveToQueue(record);
-    setCameraMode(null);
-    setTaskNoteModalVisible(false);
-    showToast(
-      'No internet connection. Saved locally and will sync when online.',
-      'info',
-    );
-    return;
-  }
-
-  try {
-    const res = await timePunch(record);
-    setCameraMode(null);
-    setTaskNoteModalVisible(false);
-    showToast(res?.message ?? 'Action completed successfully!', 'success');
-    syncOfflineQueue(timePunch, (record, msg) => {
-      showToast(`Offline punch (${record.action}) couldn't be synced: ${msg}`, 'error');
-    });
-  } catch (e: any) {
-    setCameraMode(null);
-    setTaskNoteModalVisible(false);
-
-    if (e?.response?.status) {
-      const msg =
-        e.response?.data?.message ??
-        'That action could not be completed. Please check the details and try again.';
-      showToast(msg, 'error');
-
-      if (action === 'time_out' && e.response.status === 422) {
-        refetch();
-      }
-      return;
-    }
-
-    // No response at all — genuine network/server-unreachable case.
-    await saveToQueue(record);
-    showToast(
-      'Server unreachable. Your punch has been saved locally.',
-      'error',
-    );
-  }
-};
 
   const handleActionPress = (
     action: 'break_out' | 'break_in' | 'punch_out',
@@ -251,7 +229,6 @@ const handlePunch = async (
   };
 
   const onCameraCapture = async (imageUri: string) => {
-    if (cameraMode === 'enroll') return handleEnroll(imageUri);
     if (cameraMode === 'punch_in') return handlePunch(imageUri, 'time_in');
     if (cameraMode === 'punch_out') return handlePunch(imageUri, 'time_out');
   };
@@ -466,93 +443,39 @@ const handlePunch = async (
             </Animated.View>
           )}
 
-          {!status.face_enrolled && (
+          {status.face_enrolled && isRemoved && (
             <Animated.View
-              entering={FadeInUp.duration(500).delay(150).springify()}
-              className="rounded-3xl bg-white mb-4 overflow-hidden"
+              entering={FadeInUp.duration(500).delay(200).springify()}
+              className="rounded-3xl bg-white mb-4 p-5"
               style={{
-                shadowColor: '#0F172A',
-                shadowOpacity: 0.1,
-                shadowRadius: 16,
-                shadowOffset: { width: 0, height: 6 },
-                elevation: 4,
                 borderWidth: 1.5,
-                borderColor: withAlpha(themeColor, '30'),
+                borderColor: '#FCA5A5',
+                shadowColor: '#0F172A',
+                shadowOpacity: 0.08,
+                shadowRadius: 14,
+                shadowOffset: { width: 0, height: 5 },
+                elevation: 3,
               }}
             >
-              <View className="p-5 flex-row items-center">
-                <View
-                  className="rounded-2xl p-4 mr-4"
-                  style={{ backgroundColor: withAlpha(themeColor, '12') }}
-                >
-                  <ScanFace color={themeColor} size={32} strokeWidth={1.75} />
+              <View className="flex-row items-center">
+                <View className="rounded-2xl p-3 mr-3" style={{ backgroundColor: '#FEE2E2' }}>
+                  <AlertCircle color="#DC2626" size={24} />
                 </View>
                 <View className="flex-1">
-                  <Text className="text-[15px] font-bold text-slate-900">
-                    Face Not Enrolled
+                  <Text className="text-[14px] font-bold text-slate-900">
+                    Time tracking unavailable
                   </Text>
                   <Text className="text-[12px] text-slate-500 mt-0.5 leading-5">
-                    You need to enroll your face to use time tracking features.
+                    You've been removed from your company placement, so punching in or out is disabled.
                   </Text>
                 </View>
               </View>
-              <Pressable
-                onPress={() => setCameraMode('enroll')}
-                className="mx-5 mb-5 items-center justify-center rounded-2xl py-3.5"
-                style={{ backgroundColor: themeColor }}
-              >
-                <Text className="text-white font-bold text-[14px]">
-                  Enroll My Face
-                </Text>
-              </Pressable>
             </Animated.View>
           )}
 
-          {status.face_enrolled && (
-            <Animated.View
-              entering={FadeInUp.duration(500).delay(150).springify()}
-              className="flex-row items-center rounded-2xl bg-white px-4 py-3 mb-4 border border-slate-100"
-            >
-              <CheckCircle2 color="#16A34A" size={20} />
-              <Text className="ml-2.5 text-[13px] font-semibold text-green-700">
-                Face ID enrolled
-              </Text>
-            </Animated.View>
+          {status.face_enrolled && !isRemoved && (
+            <PunchActionCard punch={punch} isPunching={isPunching} />
           )}
-
-         {status.face_enrolled && isRemoved && (
-    <Animated.View
-        entering={FadeInUp.duration(500).delay(200).springify()}
-        className="rounded-3xl bg-white mb-4 p-5"
-        style={{
-            borderWidth: 1.5,
-            borderColor: '#FCA5A5',
-            shadowColor: '#0F172A',
-            shadowOpacity: 0.08,
-            shadowRadius: 14,
-            shadowOffset: { width: 0, height: 5 },
-            elevation: 3,
-        }}
-    >
-        <View className="flex-row items-center">
-            <View className="rounded-2xl p-3 mr-3" style={{ backgroundColor: '#FEE2E2' }}>
-                <AlertCircle color="#DC2626" size={24} />
-            </View>
-            <View className="flex-1">
-                <Text className="text-[14px] font-bold text-slate-900">
-                    Time tracking unavailable
-                </Text>
-                <Text className="text-[12px] text-slate-500 mt-0.5 leading-5">
-                    You've been removed from your company placement, so punching in or out is disabled.
-                </Text>
-            </View>
-        </View>
-    </Animated.View>
-)}
-
-{status.face_enrolled && !isRemoved && (
-    <PunchActionCard punch={punch} isPunching={isPunching} />
-)}
 
           {taskNeedsUpdate && (
             <Animated.View
@@ -632,18 +555,18 @@ const handlePunch = async (
             }}
           >
             <View className="px-5 pt-5 pb-2 flex-row items-center justify-between">
-                <Text className="text-[11px] font-bold uppercase tracking-[1.5px] text-slate-400">
-                  Today's Timeline
+              <Text className="text-[11px] font-bold uppercase tracking-[1.5px] text-slate-400">
+                Today's Timeline
+              </Text>
+              <Pressable
+                onPress={() => navigation.navigate('TimeLogHistory')}
+                className="flex-row items-center"
+              >
+                <Text className="text-[11px] font-bold" style={{ color: themeColor }}>
+                  View History
                 </Text>
-                <Pressable
-                  onPress={() => navigation.navigate('TimeLogHistory')}
-                  className="flex-row items-center"
-                >
-                  <Text className="text-[11px] font-bold" style={{ color: themeColor }}>
-                    View History
-                  </Text>
-                </Pressable>
-              </View>
+              </Pressable>
+            </View>
             <View className="px-5 pb-5">
               <InfoRow
                 icon={LogIn}
@@ -793,7 +716,7 @@ const handlePunch = async (
               setReasonModalVisible(false);
               setSelectedExcursionId(null);
             } catch (e) {
-             showToast('Failed to submit reason.', 'error');
+              showToast('Failed to submit reason.', 'error');
             }
           }
         }}
@@ -805,21 +728,17 @@ const handlePunch = async (
         visible={cameraMode !== null}
         onClose={() => setCameraMode(null)}
         onEnroll={onCameraCapture}
-        isEnrolling={isEnrolling || isPunching}
+        isEnrolling={isPunching}
         themeColor={themeColor}
         title={
-          cameraMode === 'enroll'
-            ? 'Enroll Your Face'
-            : cameraMode === 'punch_in'
-              ? 'Punch In — Face Verification'
-              : 'Punch Out — Face Verification'
+          cameraMode === 'punch_in'
+            ? 'Punch In — Face Verification'
+            : 'Punch Out — Face Verification'
         }
         captureLabel={
-          cameraMode === 'enroll'
-            ? 'Capture & Enroll'
-            : cameraMode === 'punch_in'
-              ? 'Confirm Punch In'
-              : 'Confirm Punch Out'
+          cameraMode === 'punch_in'
+            ? 'Confirm Punch In'
+            : 'Confirm Punch Out'
         }
       />
 

@@ -1,11 +1,18 @@
 import { Text, View, ActivityIndicator, ScrollView, Pressable, Modal, TextInput, KeyboardAvoidingView, Platform, PermissionsAndroid } from 'react-native';
 import { useState } from 'react';
-import { Building2, Clock, CalendarDays, TrendingUp, Send, X, MapPin } from 'lucide-react-native';
+import { Building2, Clock, CalendarDays, TrendingUp, Send, X, MapPin, Bell, ClipboardList, ScanFace } from 'lucide-react-native';
 import LinearGradient from 'react-native-linear-gradient';
 import Animated, { FadeIn, FadeInUp, FadeInDown } from 'react-native-reanimated';
 import Geolocation from '@react-native-community/geolocation';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useDashboard, useRequestCompany, useRequestSchedule } from '../util/queries/dashboard';
+import { useNavigation, NavigationProp } from '@react-navigation/native';
+import { RootStackParamList } from '../components/Navigation';
+import { useNotifications, useMarkNotificationsSeen, useMarkReviewAlertsSeen, useInAppNotifications } from '../util/queries/notifications';
+import { useMyEvaluations } from '../util/queries/evaluation';
+import { useTimeStatus, useEnrollFace } from '../util/queries/timelog';
+import FaceEnrollModal from '../components/modal/FaceEnrollModal';
+
 import { useUser } from '../util/queries/auth';
 import { useToast } from '../components/ToastProvider';
 
@@ -132,6 +139,47 @@ export default function Home() {
     const { mutateAsync: requestSchedule, isPending: isSubmittingSchedule } = useRequestSchedule();
     const { showToast } = useToast();
     const themeColor = userData?.settings?.theme_color || '#1D4ED8';
+    const navigation = useNavigation<NavigationProp<RootStackParamList>>();
+
+    const { data: timeStatus } = useTimeStatus();
+    const { mutateAsync: enrollFace, isPending: isEnrolling } = useEnrollFace();
+
+    const faceNotEnrolled = timeStatus && !timeStatus.face_enrolled;
+    const [startFaceEnroll, setStartFaceEnroll] = useState(false);
+
+    const handleEnroll = async (imageUri: string) => {
+        try {
+            await enrollFace({ image: imageUri });
+            showToast('Face enrolled successfully!', 'success');
+        } catch (err: any) {
+            showToast(err?.response?.data?.message ?? 'Face enrollment failed. Please try again.', 'error');
+        }
+    };
+
+    // Notification Hooks
+    const { data: notificationsData, refetch: refetchNotifications } = useNotifications();
+    const { mutateAsync: markSeen } = useMarkNotificationsSeen();
+    const { mutateAsync: markReviewSeen } = useMarkReviewAlertsSeen();
+    const { data: inAppNotifications = [] } = useInAppNotifications();
+    const inAppUnreadCount = inAppNotifications.length;
+    const [isNotificationModalOpen, setIsNotificationModalOpen] = useState(false);
+
+    // Evaluation Hooks
+    const { data: evaluations } = useMyEvaluations();
+    const pendingEvaluationsCount = evaluations?.filter(e => e.status === 'pending').length || 0;
+
+    const handleOpenNotifications = async () => {
+        setIsNotificationModalOpen(true);
+        try {
+            if (notificationsData?.unread_count) {
+                await Promise.all([markSeen(), markReviewSeen()]);
+                refetchNotifications();
+            }
+        } catch (e) {
+            console.error('Failed to mark notifications as seen', e);
+        }
+    };
+
 
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [companyName, setCompanyName] = useState('');
@@ -332,9 +380,26 @@ export default function Home() {
                             borderBottomRightRadius: 36,
                         }}
                     >
-                        <Text className="text-white/75 text-sm font-medium">Welcome back 👋</Text>
-                        <Text className="text-white text-[26px] font-bold mt-1">{firstName}</Text>
-                        <Text className="text-white/60 text-[13px] mt-1">{student?.section ?? 'N/A'} · {course?.code ?? 'N/A'}</Text>
+                        <View className="flex-row justify-between items-start">
+                            <View>
+                                <Text className="text-white/75 text-sm font-medium">Welcome back 👋</Text>
+                                <Text className="text-white text-[26px] font-bold mt-1">{firstName}</Text>
+                                <Text className="text-white/60 text-[13px] mt-1">{student?.section ?? 'N/A'} · {course?.code ?? 'N/A'}</Text>
+                            </View>
+                            <Pressable
+                                onPress={() => navigation.navigate('Notifications')}
+                                className="relative mt-1"
+                            >
+                                <Bell color="#fff" size={24} />
+                                {inAppUnreadCount > 0 && (
+                                    <View className="absolute -top-1 -right-1 bg-red-500 rounded-full w-4 h-4 items-center justify-center border border-white">
+                                        <Text className="text-white text-[10px] font-bold">
+                                            {inAppUnreadCount > 9 ? '9+' : inAppUnreadCount}
+                                        </Text>
+                                    </View>
+                                )}
+                            </Pressable>
+                        </View>
                     </LinearGradient>
                 </Animated.View>
                 {isRemoved && (
@@ -418,6 +483,48 @@ export default function Home() {
                     </View>
                 </Animated.View>
 
+
+                {/* Pending Evaluations Quick Access */}
+                {pendingEvaluationsCount > 0 && (
+                    <Animated.View entering={FadeInUp.duration(500).delay(280).springify()} className="mt-4 px-5">
+                        <Pressable onPress={() => navigation.navigate('MyEvaluation')}>
+                            <View
+                                className="rounded-3xl bg-white p-5 flex-row items-center justify-between"
+                                style={{
+                                    borderWidth: 1.5,
+                                    borderColor: themeColor,
+                                    shadowColor: '#0F172A',
+                                    shadowOpacity: 0.06,
+                                    shadowRadius: 14,
+                                    shadowOffset: { width: 0, height: 5 },
+                                    elevation: 2,
+                                }}
+                            >
+                                <View className="flex-row items-center flex-1">
+                                    <View
+                                        className="items-center justify-center rounded-full"
+                                        style={{ width: 42, height: 42, backgroundColor: withAlpha(themeColor, '15') }}
+                                    >
+                                        <ClipboardList color={themeColor} size={20} strokeWidth={2} />
+                                    </View>
+                                    <View className="ml-3 flex-1">
+                                        <Text className="text-[14px] font-bold text-slate-800">Pending Evaluations</Text>
+                                        <Text className="text-[12px] text-slate-500 mt-0.5">
+                                            You have {pendingEvaluationsCount} performance evaluation(s) pending.
+                                        </Text>
+                                    </View>
+                                </View>
+                                <View
+                                    className="items-center justify-center rounded-full ml-3"
+                                    style={{ width: 32, height: 32, backgroundColor: '#F1F5F9' }}
+                                >
+                                    <Text className="text-slate-400 font-bold">→</Text>
+                                </View>
+                            </View>
+                        </Pressable>
+                    </Animated.View>
+                )}
+
                 {/* Schedule card */}
                 <Animated.View entering={FadeInUp.duration(500).delay(350).springify()} className="mt-4 px-5">
                     <Card title="Schedule" themeColor={themeColor}>
@@ -465,7 +572,7 @@ export default function Home() {
             {/* Request Company Modal */}
             <Modal visible={isModalOpen} animationType="slide" transparent statusBarTranslucent onRequestClose={() => setIsModalOpen(false)}>
                 <KeyboardAvoidingView
-                    behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                    behavior="padding"
                     className="flex-1"
                 >
                     <View className="flex-1 justify-end">
@@ -534,7 +641,7 @@ export default function Home() {
             {/* Request Schedule Modal */}
             <Modal visible={isScheduleModalOpen} animationType="slide" transparent statusBarTranslucent onRequestClose={() => setIsScheduleModalOpen(false)}>
                 <KeyboardAvoidingView
-                    behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                    behavior="padding"
                     className="flex-1"
                 >
                     <View className="flex-1 justify-end">
@@ -543,7 +650,7 @@ export default function Home() {
                             onPress={() => setIsScheduleModalOpen(false)}
                         />
                         <View className="bg-white rounded-t-3xl p-6" style={{ maxHeight: '80%' }}>
-                            <ScrollView showsVerticalScrollIndicator={false}>
+                            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
                                 <View className="flex-row justify-between items-center mb-4">
                                     <Text className="text-lg font-bold text-slate-900">Request Schedule</Text>
                                     <Pressable onPress={() => setIsScheduleModalOpen(false)} className="p-1">
@@ -676,6 +783,99 @@ export default function Home() {
                     </View>
                 </KeyboardAvoidingView>
             </Modal>
+
+            {/* Notification Modal */}
+            <Modal visible={isNotificationModalOpen} animationType="slide" transparent statusBarTranslucent onRequestClose={() => setIsNotificationModalOpen(false)}>
+                <View className="flex-1 justify-end">
+                    <Pressable
+                        className="absolute inset-0 bg-black/50"
+                        onPress={() => setIsNotificationModalOpen(false)}
+                    />
+                    <View className="bg-white rounded-t-3xl p-6" style={{ maxHeight: '80%', minHeight: '50%' }}>
+                        <View className="flex-row justify-between items-center mb-6">
+                            <Text className="text-lg font-bold text-slate-900">Notifications</Text>
+                            <Pressable onPress={() => setIsNotificationModalOpen(false)} className="p-1">
+                                <X size={20} color="#64748B" />
+                            </Pressable>
+                        </View>
+                        <ScrollView showsVerticalScrollIndicator={false}>
+                            {(!notificationsData?.notifications || notificationsData.notifications.length === 0) ? (
+                                <View className="items-center justify-center py-10 mt-10">
+                                    <View className="items-center justify-center rounded-full mb-3" style={{ width: 48, height: 48, backgroundColor: '#F1F5F9' }}>
+                                        <Bell color="#94A3B8" size={24} />
+                                    </View>
+                                    <Text className="text-slate-500 text-sm">No new notifications</Text>
+                                </View>
+                            ) : (
+                                notificationsData.notifications.map((notif: any, i: number) => (
+                                    <View key={notif.id + '_' + i} className={"flex-row items-start mb-4 pb-4 border-b border-slate-100 " + (notif.is_new ? 'bg-slate-50/50 -mx-6 px-6 pt-3' : '')}>
+                                        <View className="items-center justify-center rounded-full mt-1 mr-3" style={{ width: 32, height: 32, backgroundColor: withAlpha(themeColor, '12') }}>
+                                            <Bell color={themeColor} size={16} />
+                                        </View>
+                                        <View className="flex-1">
+                                            <Text className={"text-[14px] " + (notif.is_new ? 'font-semibold text-slate-900' : 'font-medium text-slate-800')}>{notif.title}</Text>
+                                            <Text className="text-[12px] text-slate-500 mt-1">{notif.message}</Text>
+                                            {notif.deadline_at && (
+                                                <Text className="text-[11px] text-slate-400 mt-1.5 uppercase font-medium tracking-wide">
+                                                    Deadline: {new Date(notif.deadline_at).toLocaleDateString()}
+                                                </Text>
+                                            )}
+                                        </View>
+                                    </View>
+                                ))
+                            )}
+                        </ScrollView>
+                    </View>
+                </View>
+            </Modal>
+
+            {/* Face Enrollment Gate (Overrides Home entirely if not enrolled) */}
+            {faceNotEnrolled && (
+                <Modal visible animationType="fade" statusBarTranslucent onRequestClose={() => { }}>
+                    <View style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
+                        <View style={{
+                            paddingTop: 60,
+                            paddingBottom: 24,
+                            paddingHorizontal: 24,
+                            backgroundColor: themeColor,
+                            borderBottomLeftRadius: 36,
+                            borderBottomRightRadius: 36,
+                        }}>
+                            <Text style={{ color: '#fff', fontSize: 22, fontWeight: 'bold' }}>Face Enrollment Required</Text>
+                            <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, marginTop: 4 }}>
+                                You must complete face enrollment before using the app.
+                            </Text>
+                        </View>
+                        <View style={{ flex: 1, alignItems: 'center', padding: 24, paddingTop: 64 }}>
+                            <View className="items-center justify-center rounded-full bg-slate-100 mb-6" style={{ width: 80, height: 80 }}>
+                                <ScanFace color={themeColor} size={40} />
+                            </View>
+                            <Text style={{ fontSize: 15, color: '#475569', textAlign: 'center', lineHeight: 24, marginBottom: 32 }}>
+                                Your face ID is required for time tracking and identity verification.
+                                Please enroll your face to continue using the application.
+                            </Text>
+
+                            <Pressable
+                                onPress={() => setStartFaceEnroll(true)}
+                                className="w-full rounded-2xl py-4 items-center"
+                                style={{ backgroundColor: themeColor }}
+                            >
+                                <Text className="text-white font-bold text-base">Start Face Enrollment</Text>
+                            </Pressable>
+
+                            <FaceEnrollModal
+                                visible={startFaceEnroll}
+                                onEnroll={handleEnroll}
+                                isEnrolling={isEnrolling}
+                                themeColor={themeColor}
+                                title="Face Enrollment"
+                                captureLabel="Enroll My Face"
+                                onClose={() => setStartFaceEnroll(false)}
+                            />
+                        </View>
+                    </View>
+                </Modal>
+            )}
         </>
     );
 }

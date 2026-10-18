@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { AppState } from 'react-native';
 import { useQueryClient } from '@tanstack/react-query';
+import { displayRemoteNotification } from '../fcmNotifications';
 import { getApp } from '@react-native-firebase/app';
 import {
   getMessaging,
@@ -8,9 +9,6 @@ import {
   onNotificationOpenedApp,
   getInitialNotification,
 } from '@react-native-firebase/messaging';
-import type { RemoteMessage } from '@react-native-firebase/messaging';
-
-const REFETCH_TYPES = new Set(['schedule_status_update', 'company_status_update']);
 
 export function useFcmListener() {
   const queryClient = useQueryClient();
@@ -18,32 +16,38 @@ export function useFcmListener() {
   useEffect(() => {
     const messaging = getMessaging(getApp());
 
-    const invalidateForType = (type?: string) => {
-      if (!type || !REFETCH_TYPES.has(type)) return;
-      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+    const invalidateAll = () => {
+      const keys = [
+        ['dashboard'],
+        ['documents'],
+        ['evaluations'],
+        ['pendingExcursions'],
+        ['notifications'],
+        ['intern_profile'],
+        ['in_app_notifications'], // bell badge (unread)
+        ['all_notifications'],   
+        ['time_status'],
+        ['company_requests'],
+      ];
+      keys.forEach((queryKey) => queryClient.invalidateQueries({ queryKey }));
     };
 
-    const unsubscribeForeground = onMessage(
-      messaging,
-      (remoteMessage: RemoteMessage) => {
-        invalidateForType(remoteMessage.data?.type as string | undefined);
-      }
-    );
+    const unsubscribeForeground = onMessage(messaging, async (remoteMessage) => {
+      invalidateAll();
+      await displayRemoteNotification(remoteMessage);
+    });
 
-    const unsubscribeOpened = onNotificationOpenedApp(
-      messaging,
-      (remoteMessage: RemoteMessage) => {
-        invalidateForType(remoteMessage.data?.type as string | undefined);
-      }
-    );
+    const unsubscribeOpened = onNotificationOpenedApp(messaging, () => {
+      invalidateAll();
+    });
 
     getInitialNotification(messaging).then((remoteMessage) => {
-      if (remoteMessage) invalidateForType(remoteMessage.data?.type as string | undefined);
+      if (remoteMessage) invalidateAll();
     });
 
     const appStateSub = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active') {
-        queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+        invalidateAll();
       }
     });
 

@@ -1,6 +1,6 @@
 import { Text, View, ActivityIndicator, ScrollView, Pressable, Modal, TextInput, KeyboardAvoidingView, Platform, PermissionsAndroid } from 'react-native';
 import { useState } from 'react';
-import { Building2, Clock, CalendarDays, TrendingUp, Send, X, MapPin, Bell, ClipboardList, ScanFace } from 'lucide-react-native';
+import { Building2, Clock, CalendarDays, TrendingUp, Send, X, MapPin, Bell, ClipboardList, ScanFace, ShieldAlert } from 'lucide-react-native';
 import LinearGradient from 'react-native-linear-gradient';
 import Animated, { FadeIn, FadeInUp, FadeInDown } from 'react-native-reanimated';
 import Geolocation from '@react-native-community/geolocation';
@@ -146,14 +146,43 @@ export default function Home() {
 
     const faceNotEnrolled = timeStatus && !timeStatus.face_enrolled;
     const [startFaceEnroll, setStartFaceEnroll] = useState(false);
+    const [enrollError, setEnrollError] = useState<{
+      title: string;
+      message: string;
+    } | null>(null);
 
     const handleEnroll = async (imageUri: string) => {
-        try {
-            await enrollFace({ image: imageUri });
-            showToast('Face enrolled successfully!', 'success');
-        } catch (err: any) {
-            showToast(err?.response?.data?.message ?? 'Face enrollment failed. Please try again.', 'error');
-        }
+      try {
+        await enrollFace({ image: imageUri });
+        setStartFaceEnroll(false);
+        setEnrollError(null);
+        showToast('Face enrolled successfully!', 'success');
+      } catch (err: any) {
+        setStartFaceEnroll(false); // closes the camera
+
+        const data = err?.response?.data;
+        const serverMessage: string | undefined =
+          data?.errors?.image?.[0] ?? data?.message;
+        const isDuplicate =
+          data?.code === 'FACE_ALREADY_ENROLLED' ||
+          /already enrolled/i.test(serverMessage ?? '');
+
+        setEnrollError(
+          isDuplicate
+            ? {
+                title: 'Face Already Enrolled',
+                message:
+                  'This face is already enrolled to another account. If you think this is a mistake, please contact your coordinator.',
+              }
+            : {
+                title: 'Enrollment Failed',
+                message:
+                  serverMessage ??
+                  err?.message ??
+                  'Face enrollment failed. Please try again.',
+              },
+        );
+      }
     };
 
     // Notification Hooks
@@ -163,7 +192,7 @@ export default function Home() {
     const { data: inAppNotifications = [] } = useInAppNotifications();
     const inAppUnreadCount = inAppNotifications.length;
     const [isNotificationModalOpen, setIsNotificationModalOpen] = useState(false);
-
+    
     // Evaluation Hooks
     const { data: evaluations } = useMyEvaluations();
     const pendingEvaluationsCount = evaluations?.filter(e => e.status === 'pending').length || 0;
@@ -360,522 +389,817 @@ export default function Home() {
     };
 
     return (
-        <>
-            <ScrollView
-                style={{ flex: 1, backgroundColor: '#F8FAFC' }}
-                contentContainerStyle={{ paddingBottom: 106 }}
-                showsVerticalScrollIndicator={false}
+      <>
+        <ScrollView
+          style={{ flex: 1, backgroundColor: '#F8FAFC' }}
+          contentContainerStyle={{ paddingBottom: 106 }}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Header */}
+          <Animated.View entering={FadeInDown.duration(400)}>
+            <LinearGradient
+              colors={[themeColor, withAlpha(themeColor, 'CC')]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={{
+                paddingTop: 52,
+                paddingBottom: 64,
+                paddingHorizontal: 24,
+                borderBottomLeftRadius: 36,
+                borderBottomRightRadius: 36,
+              }}
             >
-                {/* Header */}
-                <Animated.View entering={FadeInDown.duration(400)}>
-                    <LinearGradient
-                        colors={[themeColor, withAlpha(themeColor, 'CC')]}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                        style={{
-                            paddingTop: 52,
-                            paddingBottom: 64,
-                            paddingHorizontal: 24,
-                            borderBottomLeftRadius: 36,
-                            borderBottomRightRadius: 36,
-                        }}
-                    >
-                        <View className="flex-row justify-between items-start">
-                            <View>
-                                <Text className="text-white/75 text-sm font-medium">Welcome back 👋</Text>
-                                <Text className="text-white text-[26px] font-bold mt-1">{firstName}</Text>
-                                <Text className="text-white/60 text-[13px] mt-1">{student?.section ?? 'N/A'} · {course?.code ?? 'N/A'}</Text>
-                            </View>
-                            <Pressable
-                                onPress={() => navigation.navigate('Notifications')}
-                                className="relative mt-1"
-                            >
-                                <Bell color="#fff" size={24} />
-                                {inAppUnreadCount > 0 && (
-                                    <View className="absolute -top-1 -right-1 bg-red-500 rounded-full w-4 h-4 items-center justify-center border border-white">
-                                        <Text className="text-white text-[10px] font-bold">
-                                            {inAppUnreadCount > 9 ? '9+' : inAppUnreadCount}
-                                        </Text>
-                                    </View>
-                                )}
-                            </Pressable>
-                        </View>
-                    </LinearGradient>
-                </Animated.View>
-                {isRemoved && (
-                    <Animated.View entering={FadeInUp.duration(500).delay(280).springify()} className="mt-4 px-5">
-                        <View
-                            className="rounded-3xl bg-white p-5"
-                            style={{
-                                borderWidth: 1.5,
-                                borderColor: '#FCA5A5',
-                                shadowColor: '#0F172A',
-                                shadowOpacity: 0.06,
-                                shadowRadius: 14,
-                                shadowOffset: { width: 0, height: 5 },
-                                elevation: 2,
-                            }}
-                        >
-                            <Text className="text-[11px] font-bold uppercase tracking-[1.5px] text-red-500 mb-2">
-                                Removed from Program
-                            </Text>
-                            <Text className="text-[13px] text-slate-700 leading-5">
-                                You were removed from your placement at{' '}
-                                <Text className="font-bold">{company?.name ?? 'your company'}</Text>.
-                            </Text>
-                            {removal_reason && (
-                                <Text className="text-[12px] text-slate-500 mt-2 leading-5">
-                                    Reason: {removal_reason}
-                                </Text>
-                            )}
-                            <Text className="text-[12px] text-slate-400 mt-3">
-                                Contact your coordinator if you believe this is a mistake, or request a new company below.
-                            </Text>
-                        </View>
-                    </Animated.View>
-                )}
-                {/* Progress card overlapping header */}
-                <Animated.View entering={FadeInUp.duration(500).delay(200).springify()} className="px-5" style={{ marginTop: -36 }}>
-                    <View
-                        className="rounded-3xl bg-white p-6"
-                        style={{
-                            shadowColor: '#0F172A',
-                            shadowOpacity: 0.1,
-                            shadowRadius: 20,
-                            shadowOffset: { width: 0, height: 8 },
-                            elevation: 5,
-                        }}
-                    >
-                        <Text className="text-[11px] font-bold uppercase tracking-[1.5px] text-slate-400 mb-5">
-                            OJT Progress
-                        </Text>
-                        <View className="flex-row items-center">
-                            <ProgressRing percent={progress?.percent_complete ?? 0} themeColor={themeColor} />
-                            <View className="flex-1 ml-6">
-                                <View className="mb-3">
-                                    <Text className="text-[11px] text-slate-400 font-medium">Hours Rendered</Text>
-                                    <Text className="text-[22px] font-bold text-slate-900" style={{ color: themeColor }}>
-                                        {progress?.rendered_hours ?? 0}
-                                        <Text className="text-[14px] font-medium text-slate-400"> / {progress?.required_hours ?? 0} hrs</Text>
-                                    </Text>
-                                </View>
-                                <View className="mb-3">
-                                    <Text className="text-[11px] text-slate-400 font-medium">Remaining</Text>
-                                    <Text className="text-[16px] font-bold text-slate-700">{progress?.remaining_hours ?? 0} hrs</Text>
-                                </View>
-                                <View>
-                                    <Text className="text-[11px] text-slate-400 font-medium">Time Logs</Text>
-                                    <Text className="text-[16px] font-bold text-slate-700">{progress?.time_log_count ?? 0} entries</Text>
-                                </View>
-                            </View>
-                        </View>
-
-                        {/* Progress bar */}
-                        <View className="mt-5 rounded-full bg-slate-100 overflow-hidden" style={{ height: 6 }}>
-                            <View
-                                className="h-full rounded-full"
-                                style={{
-                                    width: `${progress?.percent_complete ?? 0}%`,
-                                    backgroundColor: themeColor,
-                                }}
-                            />
-                        </View>
-                    </View>
-                </Animated.View>
-
-
-                {/* Pending Evaluations Quick Access */}
-                {pendingEvaluationsCount > 0 && (
-                    <Animated.View entering={FadeInUp.duration(500).delay(280).springify()} className="mt-4 px-5">
-                        <Pressable onPress={() => navigation.navigate('MyEvaluation')}>
-                            <View
-                                className="rounded-3xl bg-white p-5 flex-row items-center justify-between"
-                                style={{
-                                    borderWidth: 1.5,
-                                    borderColor: themeColor,
-                                    shadowColor: '#0F172A',
-                                    shadowOpacity: 0.06,
-                                    shadowRadius: 14,
-                                    shadowOffset: { width: 0, height: 5 },
-                                    elevation: 2,
-                                }}
-                            >
-                                <View className="flex-row items-center flex-1">
-                                    <View
-                                        className="items-center justify-center rounded-full"
-                                        style={{ width: 42, height: 42, backgroundColor: withAlpha(themeColor, '15') }}
-                                    >
-                                        <ClipboardList color={themeColor} size={20} strokeWidth={2} />
-                                    </View>
-                                    <View className="ml-3 flex-1">
-                                        <Text className="text-[14px] font-bold text-slate-800">Pending Evaluations</Text>
-                                        <Text className="text-[12px] text-slate-500 mt-0.5">
-                                            You have {pendingEvaluationsCount} performance evaluation(s) pending.
-                                        </Text>
-                                    </View>
-                                </View>
-                                <View
-                                    className="items-center justify-center rounded-full ml-3"
-                                    style={{ width: 32, height: 32, backgroundColor: '#F1F5F9' }}
-                                >
-                                    <Text className="text-slate-400 font-bold">→</Text>
-                                </View>
-                            </View>
-                        </Pressable>
-                    </Animated.View>
-                )}
-
-                {/* Schedule card */}
-                <Animated.View entering={FadeInUp.duration(500).delay(350).springify()} className="mt-4 px-5">
-                    <Card title="Schedule" themeColor={themeColor}>
-                        <InfoRow icon={Clock} label="Daily Hours" value={progress?.schedule ? `${progress.schedule.time_in} – ${progress.schedule.time_out} (${progress.schedule.hours_per_day} hrs/day)` : 'Not assigned'} themeColor={themeColor} />
-                        <InfoRow icon={CalendarDays} label="Days per Week" value={progress?.schedule ? `${progress.schedule.days_per_week} days/week` : 'Not assigned'} themeColor={themeColor} />
-                        <InfoRow icon={TrendingUp} label="Est. Completion" value={progress?.estimated_end_date ? `${progress.estimated_end_date}${progress.estimated_end_is_approximate ? ' (approx.)' : ''}` : 'N/A'} themeColor={themeColor} />
-
-                        {!isUnassigned && !isRemoved && progress?.schedule?.source !== 'approved_ojt_schedule' && (
-                            <Pressable
-                                onPress={() => setIsScheduleModalOpen(true)}
-                                className="mt-3 flex-row items-center justify-center rounded-2xl py-3 px-4"
-                                style={{ backgroundColor: withAlpha(themeColor, '15') }}
-                            >
-                                <CalendarDays color={themeColor} size={16} strokeWidth={2} />
-                                <Text className="font-bold text-[13px] ml-2" style={{ color: themeColor }}>
-                                    Request Schedule
-                                </Text>
-                            </Pressable>
-                        )}
-                    </Card>
-                </Animated.View>
-
-                {/* Company card */}
-                <Animated.View entering={FadeInUp.duration(500).delay(500).springify()} className="mt-4 px-5">
-                    <Card title="Company" themeColor={themeColor}>
-                        <InfoRow icon={Building2} label="Company Name" value={company?.name || 'Unassigned'} themeColor={themeColor} />
-                        <InfoRow icon={TrendingUp} label="Geo-fence Radius" value={company?.radius_meters ? `${company.radius_meters}m` : 'N/A'} themeColor={themeColor} />
-
-                        {(isUnassigned || isRemoved) && (
-                            <Pressable
-                                onPress={handleOpenModal}
-                                className="mt-3 flex-row items-center justify-center rounded-2xl py-3 px-4"
-                                style={{ backgroundColor: withAlpha(themeColor, '15') }}
-                            >
-                                <Send color={themeColor} size={16} strokeWidth={2} />
-                                <Text className="font-bold text-[13px] ml-2" style={{ color: themeColor }}>
-                                    Request a Company
-                                </Text>
-                            </Pressable>
-                        )}
-                    </Card>
-                </Animated.View>
-            </ScrollView>
-
-            {/* Request Company Modal */}
-            <Modal visible={isModalOpen} animationType="slide" transparent statusBarTranslucent onRequestClose={() => setIsModalOpen(false)}>
-                <KeyboardAvoidingView
-                    behavior="padding"
-                    className="flex-1"
-                >
-                    <View className="flex-1 justify-end">
-                        <Pressable
-                            className="absolute inset-0 bg-black/50"
-                            onPress={() => setIsModalOpen(false)}
-                        />
-                        <View className="bg-white rounded-t-3xl p-6">
-                            <View className="flex-row justify-between items-center mb-4">
-                                <Text className="text-lg font-bold text-slate-900">Request Company Assignment</Text>
-                                <Pressable onPress={() => setIsModalOpen(false)} className="p-1">
-                                    <X size={20} color="#64748B" />
-                                </Pressable>
-                            </View>
-
-                            <Text className="text-xs text-slate-500 mb-4 leading-5">
-                                If your host training company is not listed or assigned yet, submit the company details below for coordinator approval.
-                            </Text>
-
-                            <View className="mb-4">
-                                <Text className="text-xs font-semibold text-slate-700 mb-1">Company Name</Text>
-                                <TextInput
-                                    className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-800 text-sm"
-                                    placeholder="e.g. Lagoon Tech Partners"
-                                    placeholderTextColor="#94A3B8"
-                                    value={companyName}
-                                    onChangeText={setCompanyName}
-                                />
-                            </View>
-
-                            <View className="mb-6">
-                                <Text className="text-xs font-semibold text-slate-700 mb-1">Company Address</Text>
-                                <TextInput
-                                    className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-800 text-sm"
-                                    placeholder="e.g. Poblacion, El Salvador City"
-                                    placeholderTextColor="#94A3B8"
-                                    value={companyAddress}
-                                    onChangeText={setCompanyAddress}
-                                    multiline
-                                    numberOfLines={2}
-                                />
-                            </View>
-
-                            <Pressable
-                                onPress={handleRequestSubmit}
-                                disabled={isSubmittingRequest || isFetchingLocation}
-                                className="rounded-2xl py-3.5 items-center justify-center flex-row"
-                                style={{ backgroundColor: themeColor, opacity: (isSubmittingRequest || isFetchingLocation) ? 0.7 : 1 }}
-                            >
-                                {isSubmittingRequest ? (
-                                    <ActivityIndicator color="#fff" />
-                                ) : isFetchingLocation ? (
-                                    <Text className="text-white font-bold text-sm">Acquiring Location...</Text>
-                                ) : (
-                                    <>
-                                        <Send color="#fff" size={16} />
-                                        <Text className="text-white font-bold text-sm ml-2">Submit Request</Text>
-                                    </>
-                                )}
-                            </Pressable>
-                        </View>
-                    </View>
-                </KeyboardAvoidingView>
-            </Modal>
-
-            {/* Request Schedule Modal */}
-            <Modal visible={isScheduleModalOpen} animationType="slide" transparent statusBarTranslucent onRequestClose={() => setIsScheduleModalOpen(false)}>
-                <KeyboardAvoidingView
-                    behavior="padding"
-                    className="flex-1"
-                >
-                    <View className="flex-1 justify-end">
-                        <Pressable
-                            className="absolute inset-0 bg-black/50"
-                            onPress={() => setIsScheduleModalOpen(false)}
-                        />
-                        <View className="bg-white rounded-t-3xl p-6" style={{ maxHeight: '80%' }}>
-                            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-                                <View className="flex-row justify-between items-center mb-4">
-                                    <Text className="text-lg font-bold text-slate-900">Request Schedule</Text>
-                                    <Pressable onPress={() => setIsScheduleModalOpen(false)} className="p-1">
-                                        <X size={20} color="#64748B" />
-                                    </Pressable>
-                                </View>
-
-                                <Text className="text-xs text-slate-500 mb-4 leading-5">
-                                    Propose a new schedule for your internship. This will be sent to your coordinator for approval.
-                                </Text>
-
-                                <View className="mb-4">
-                                    <Text className="text-xs font-semibold text-slate-700 mb-1">Start Date (YYYY-MM-DD)*</Text>
-                                    <Pressable
-                                        onPress={() => setShowDatePicker(true)}
-                                        className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3"
-                                    >
-                                        <Text className={reqStartDate ? "text-slate-800 text-sm" : "text-[#94A3B8] text-sm"}>
-                                            {reqStartDate || 'Select a date'}
-                                        </Text>
-                                    </Pressable>
-                                    {showDatePicker && (
-                                        <DateTimePicker
-                                            value={reqStartDate ? new Date(reqStartDate) : new Date()}
-                                            mode="date"
-                                            display="default"
-                                            onChange={onDateChange}
-                                        />
-                                    )}
-                                </View>
-
-                                <View className="flex-row mb-4">
-                                    <View className="flex-1 mr-2">
-                                        <Text className="text-xs font-semibold text-slate-700 mb-1">Time In*</Text>
-                                        <Pressable
-                                            onPress={() => setShowTimeInPicker(true)}
-                                            className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3"
-                                        >
-                                            <Text className={reqTimeIn ? "text-slate-800 text-sm" : "text-[#94A3B8] text-sm"}>
-                                                {reqTimeIn ? formatTimeDisplay(reqTimeIn) : 'Select time'}
-                                            </Text>
-                                        </Pressable>
-                                        {showTimeInPicker && (
-                                            <DateTimePicker
-                                                value={new Date()}
-                                                mode="time"
-                                                is24Hour
-                                                display="default"
-                                                onChange={onTimeInChange}
-                                            />
-                                        )}
-                                    </View>
-                                    <View className="flex-1 ml-2">
-                                        <Text className="text-xs font-semibold text-slate-700 mb-1">Time Out*</Text>
-                                        <Pressable
-                                            onPress={() => setShowTimeOutPicker(true)}
-                                            className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3"
-                                        >
-                                            <Text className={reqTimeOut ? "text-slate-800 text-sm" : "text-[#94A3B8] text-sm"}>
-                                                {reqTimeOut ? formatTimeDisplay(reqTimeOut) : 'Select time'}
-                                            </Text>
-                                        </Pressable>
-                                        {showTimeOutPicker && (
-                                            <DateTimePicker
-                                                value={new Date()}
-                                                mode="time"
-                                                is24Hour
-                                                display="default"
-                                                onChange={onTimeOutChange}
-                                            />
-                                        )}
-                                    </View>
-                                </View>
-
-                                <View className="flex-row mb-4">
-                                    <View className="flex-1 mr-2">
-                                        <Text className="text-xs font-semibold text-slate-700 mb-1">Hours/Day</Text>
-                                        <TextInput
-                                            className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-800 text-sm"
-                                            placeholder="e.g. 8"
-                                            placeholderTextColor="#94A3B8"
-                                            keyboardType="numeric"
-                                            value={reqHoursPerDay}
-                                            onChangeText={setReqHoursPerDay}
-                                        />
-                                    </View>
-                                    <View className="flex-1 ml-2">
-                                        <Text className="text-xs font-semibold text-slate-700 mb-1">Days/Week</Text>
-                                        <TextInput
-                                            className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-800 text-sm"
-                                            placeholder="e.g. 5"
-                                            placeholderTextColor="#94A3B8"
-                                            keyboardType="numeric"
-                                            value={reqDaysPerWeek}
-                                            onChangeText={setReqDaysPerWeek}
-                                        />
-                                    </View>
-                                </View>
-
-                                <View className="mb-6">
-                                    <Text className="text-xs font-semibold text-slate-700 mb-1">Reason (Optional)</Text>
-                                    <TextInput
-                                        className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-800 text-sm"
-                                        placeholder="Reason for schedule request..."
-                                        placeholderTextColor="#94A3B8"
-                                        value={reqReason}
-                                        onChangeText={setReqReason}
-                                        multiline
-                                        numberOfLines={2}
-                                    />
-                                </View>
-
-                                <Pressable
-                                    onPress={handleScheduleSubmit}
-                                    disabled={isSubmittingSchedule}
-                                    className="rounded-2xl py-3.5 items-center justify-center flex-row"
-                                    style={{ backgroundColor: themeColor, opacity: isSubmittingSchedule ? 0.7 : 1 }}
-                                >
-                                    {isSubmittingSchedule ? (
-                                        <ActivityIndicator color="#fff" />
-                                    ) : (
-                                        <>
-                                            <Send color="#fff" size={16} />
-                                            <Text className="text-white font-bold text-sm ml-2">Submit Schedule Request</Text>
-                                        </>
-                                    )}
-                                </Pressable>
-                            </ScrollView>
-                        </View>
-                    </View>
-                </KeyboardAvoidingView>
-            </Modal>
-
-            {/* Notification Modal */}
-            <Modal visible={isNotificationModalOpen} animationType="slide" transparent statusBarTranslucent onRequestClose={() => setIsNotificationModalOpen(false)}>
-                <View className="flex-1 justify-end">
-                    <Pressable
-                        className="absolute inset-0 bg-black/50"
-                        onPress={() => setIsNotificationModalOpen(false)}
-                    />
-                    <View className="bg-white rounded-t-3xl p-6" style={{ maxHeight: '80%', minHeight: '50%' }}>
-                        <View className="flex-row justify-between items-center mb-6">
-                            <Text className="text-lg font-bold text-slate-900">Notifications</Text>
-                            <Pressable onPress={() => setIsNotificationModalOpen(false)} className="p-1">
-                                <X size={20} color="#64748B" />
-                            </Pressable>
-                        </View>
-                        <ScrollView showsVerticalScrollIndicator={false}>
-                            {(!notificationsData?.notifications || notificationsData.notifications.length === 0) ? (
-                                <View className="items-center justify-center py-10 mt-10">
-                                    <View className="items-center justify-center rounded-full mb-3" style={{ width: 48, height: 48, backgroundColor: '#F1F5F9' }}>
-                                        <Bell color="#94A3B8" size={24} />
-                                    </View>
-                                    <Text className="text-slate-500 text-sm">No new notifications</Text>
-                                </View>
-                            ) : (
-                                notificationsData.notifications.map((notif: any, i: number) => (
-                                    <View key={notif.id + '_' + i} className={"flex-row items-start mb-4 pb-4 border-b border-slate-100 " + (notif.is_new ? 'bg-slate-50/50 -mx-6 px-6 pt-3' : '')}>
-                                        <View className="items-center justify-center rounded-full mt-1 mr-3" style={{ width: 32, height: 32, backgroundColor: withAlpha(themeColor, '12') }}>
-                                            <Bell color={themeColor} size={16} />
-                                        </View>
-                                        <View className="flex-1">
-                                            <Text className={"text-[14px] " + (notif.is_new ? 'font-semibold text-slate-900' : 'font-medium text-slate-800')}>{notif.title}</Text>
-                                            <Text className="text-[12px] text-slate-500 mt-1">{notif.message}</Text>
-                                            {notif.deadline_at && (
-                                                <Text className="text-[11px] text-slate-400 mt-1.5 uppercase font-medium tracking-wide">
-                                                    Deadline: {new Date(notif.deadline_at).toLocaleDateString()}
-                                                </Text>
-                                            )}
-                                        </View>
-                                    </View>
-                                ))
-                            )}
-                        </ScrollView>
-                    </View>
+              <View className="flex-row justify-between items-start">
+                <View>
+                  <Text className="text-white/75 text-sm font-medium">
+                    Welcome back 👋
+                  </Text>
+                  <Text className="text-white text-[26px] font-bold mt-1">
+                    {firstName}
+                  </Text>
+                  <Text className="text-white/60 text-[13px] mt-1">
+                    {student?.section ?? 'N/A'} · {course?.code ?? 'N/A'}
+                  </Text>
                 </View>
-            </Modal>
-
-            {/* Face Enrollment Gate (Overrides Home entirely if not enrolled) */}
-            {faceNotEnrolled && (
-                <Modal visible animationType="fade" statusBarTranslucent onRequestClose={() => { }}>
-                    <View style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
-                        <View style={{
-                            paddingTop: 60,
-                            paddingBottom: 24,
-                            paddingHorizontal: 24,
-                            backgroundColor: themeColor,
-                            borderBottomLeftRadius: 36,
-                            borderBottomRightRadius: 36,
-                        }}>
-                            <Text style={{ color: '#fff', fontSize: 22, fontWeight: 'bold' }}>Face Enrollment Required</Text>
-                            <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, marginTop: 4 }}>
-                                You must complete face enrollment before using the app.
-                            </Text>
-                        </View>
-                        <View style={{ flex: 1, alignItems: 'center', padding: 24, paddingTop: 64 }}>
-                            <View className="items-center justify-center rounded-full bg-slate-100 mb-6" style={{ width: 80, height: 80 }}>
-                                <ScanFace color={themeColor} size={40} />
-                            </View>
-                            <Text style={{ fontSize: 15, color: '#475569', textAlign: 'center', lineHeight: 24, marginBottom: 32 }}>
-                                Your face ID is required for time tracking and identity verification.
-                                Please enroll your face to continue using the application.
-                            </Text>
-
-                            <Pressable
-                                onPress={() => setStartFaceEnroll(true)}
-                                className="w-full rounded-2xl py-4 items-center"
-                                style={{ backgroundColor: themeColor }}
-                            >
-                                <Text className="text-white font-bold text-base">Start Face Enrollment</Text>
-                            </Pressable>
-
-                            <FaceEnrollModal
-                                visible={startFaceEnroll}
-                                onEnroll={handleEnroll}
-                                isEnrolling={isEnrolling}
-                                themeColor={themeColor}
-                                title="Face Enrollment"
-                                captureLabel="Enroll My Face"
-                                onClose={() => setStartFaceEnroll(false)}
-                            />
-                        </View>
+                <Pressable
+                  onPress={() => navigation.navigate('Notifications')}
+                  className="relative mt-1"
+                >
+                  <Bell color="#fff" size={24} />
+                  {inAppUnreadCount > 0 && (
+                    <View className="absolute -top-1 -right-1 bg-red-500 rounded-full w-4 h-4 items-center justify-center border border-white">
+                      <Text className="text-white text-[10px] font-bold">
+                        {inAppUnreadCount > 9 ? '9+' : inAppUnreadCount}
+                      </Text>
                     </View>
-                </Modal>
-            )}
-        </>
+                  )}
+                </Pressable>
+              </View>
+            </LinearGradient>
+          </Animated.View>
+          {isRemoved && (
+            <Animated.View
+              entering={FadeInUp.duration(500).delay(280).springify()}
+              className="mt-4 px-5"
+            >
+              <View
+                className="rounded-3xl bg-white p-5"
+                style={{
+                  borderWidth: 1.5,
+                  borderColor: '#FCA5A5',
+                  shadowColor: '#0F172A',
+                  shadowOpacity: 0.06,
+                  shadowRadius: 14,
+                  shadowOffset: { width: 0, height: 5 },
+                  elevation: 2,
+                }}
+              >
+                <Text className="text-[11px] font-bold uppercase tracking-[1.5px] text-red-500 mb-2">
+                  Removed from Program
+                </Text>
+                <Text className="text-[13px] text-slate-700 leading-5">
+                  You were removed from your placement at{' '}
+                  <Text className="font-bold">
+                    {company?.name ?? 'your company'}
+                  </Text>
+                  .
+                </Text>
+                {removal_reason && (
+                  <Text className="text-[12px] text-slate-500 mt-2 leading-5">
+                    Reason: {removal_reason}
+                  </Text>
+                )}
+                <Text className="text-[12px] text-slate-400 mt-3">
+                  Contact your coordinator if you believe this is a mistake, or
+                  request a new company below.
+                </Text>
+              </View>
+            </Animated.View>
+          )}
+          {/* Progress card overlapping header */}
+          <Animated.View
+            entering={FadeInUp.duration(500).delay(200).springify()}
+            className="px-5"
+            style={{ marginTop: -36 }}
+          >
+            <View
+              className="rounded-3xl bg-white p-6"
+              style={{
+                shadowColor: '#0F172A',
+                shadowOpacity: 0.1,
+                shadowRadius: 20,
+                shadowOffset: { width: 0, height: 8 },
+                elevation: 5,
+              }}
+            >
+              <Text className="text-[11px] font-bold uppercase tracking-[1.5px] text-slate-400 mb-5">
+                OJT Progress
+              </Text>
+              <View className="flex-row items-center">
+                <ProgressRing
+                  percent={progress?.percent_complete ?? 0}
+                  themeColor={themeColor}
+                />
+                <View className="flex-1 ml-6">
+                  <View className="mb-3">
+                    <Text className="text-[11px] text-slate-400 font-medium">
+                      Hours Rendered
+                    </Text>
+                    <Text
+                      className="text-[22px] font-bold text-slate-900"
+                      style={{ color: themeColor }}
+                    >
+                      {progress?.rendered_hours ?? 0}
+                      <Text className="text-[14px] font-medium text-slate-400">
+                        {' '}
+                        / {progress?.required_hours ?? 0} hrs
+                      </Text>
+                    </Text>
+                  </View>
+                  <View className="mb-3">
+                    <Text className="text-[11px] text-slate-400 font-medium">
+                      Remaining
+                    </Text>
+                    <Text className="text-[16px] font-bold text-slate-700">
+                      {progress?.remaining_hours ?? 0} hrs
+                    </Text>
+                  </View>
+                  <View>
+                    <Text className="text-[11px] text-slate-400 font-medium">
+                      Time Logs
+                    </Text>
+                    <Text className="text-[16px] font-bold text-slate-700">
+                      {progress?.time_log_count ?? 0} entries
+                    </Text>
+                  </View>
+                </View>
+              </View>
+
+              {/* Progress bar */}
+              <View
+                className="mt-5 rounded-full bg-slate-100 overflow-hidden"
+                style={{ height: 6 }}
+              >
+                <View
+                  className="h-full rounded-full"
+                  style={{
+                    width: `${progress?.percent_complete ?? 0}%`,
+                    backgroundColor: themeColor,
+                  }}
+                />
+              </View>
+            </View>
+          </Animated.View>
+
+          {/* Pending Evaluations Quick Access */}
+          {pendingEvaluationsCount > 0 && (
+            <Animated.View
+              entering={FadeInUp.duration(500).delay(280).springify()}
+              className="mt-4 px-5"
+            >
+              <Pressable onPress={() => navigation.navigate('MyEvaluation')}>
+                <View
+                  className="rounded-3xl bg-white p-5 flex-row items-center justify-between"
+                  style={{
+                    borderWidth: 1.5,
+                    borderColor: themeColor,
+                    shadowColor: '#0F172A',
+                    shadowOpacity: 0.06,
+                    shadowRadius: 14,
+                    shadowOffset: { width: 0, height: 5 },
+                    elevation: 2,
+                  }}
+                >
+                  <View className="flex-row items-center flex-1">
+                    <View
+                      className="items-center justify-center rounded-full"
+                      style={{
+                        width: 42,
+                        height: 42,
+                        backgroundColor: withAlpha(themeColor, '15'),
+                      }}
+                    >
+                      <ClipboardList
+                        color={themeColor}
+                        size={20}
+                        strokeWidth={2}
+                      />
+                    </View>
+                    <View className="ml-3 flex-1">
+                      <Text className="text-[14px] font-bold text-slate-800">
+                        Pending Evaluations
+                      </Text>
+                      <Text className="text-[12px] text-slate-500 mt-0.5">
+                        You have {pendingEvaluationsCount} performance
+                        evaluation(s) pending.
+                      </Text>
+                    </View>
+                  </View>
+                  <View
+                    className="items-center justify-center rounded-full ml-3"
+                    style={{
+                      width: 32,
+                      height: 32,
+                      backgroundColor: '#F1F5F9',
+                    }}
+                  >
+                    <Text className="text-slate-400 font-bold">→</Text>
+                  </View>
+                </View>
+              </Pressable>
+            </Animated.View>
+          )}
+
+          {/* Schedule card */}
+          <Animated.View
+            entering={FadeInUp.duration(500).delay(350).springify()}
+            className="mt-4 px-5"
+          >
+            <Card title="Schedule" themeColor={themeColor}>
+              <InfoRow
+                icon={Clock}
+                label="Daily Hours"
+                value={
+                  progress?.schedule
+                    ? `${progress.schedule.time_in} – ${progress.schedule.time_out} (${progress.schedule.hours_per_day} hrs/day)`
+                    : 'Not assigned'
+                }
+                themeColor={themeColor}
+              />
+              <InfoRow
+                icon={CalendarDays}
+                label="Days per Week"
+                value={
+                  progress?.schedule
+                    ? `${progress.schedule.days_per_week} days/week`
+                    : 'Not assigned'
+                }
+                themeColor={themeColor}
+              />
+              <InfoRow
+                icon={TrendingUp}
+                label="Est. Completion"
+                value={
+                  progress?.estimated_end_date
+                    ? `${progress.estimated_end_date}${
+                        progress.estimated_end_is_approximate
+                          ? ' (approx.)'
+                          : ''
+                      }`
+                    : 'N/A'
+                }
+                themeColor={themeColor}
+              />
+
+              {!isUnassigned &&
+                !isRemoved &&
+                progress?.schedule?.source !== 'approved_ojt_schedule' && (
+                  <Pressable
+                    onPress={() => setIsScheduleModalOpen(true)}
+                    className="mt-3 flex-row items-center justify-center rounded-2xl py-3 px-4"
+                    style={{ backgroundColor: withAlpha(themeColor, '15') }}
+                  >
+                    <CalendarDays
+                      color={themeColor}
+                      size={16}
+                      strokeWidth={2}
+                    />
+                    <Text
+                      className="font-bold text-[13px] ml-2"
+                      style={{ color: themeColor }}
+                    >
+                      Request Schedule
+                    </Text>
+                  </Pressable>
+                )}
+            </Card>
+          </Animated.View>
+
+          {/* Company card */}
+          <Animated.View
+            entering={FadeInUp.duration(500).delay(500).springify()}
+            className="mt-4 px-5"
+          >
+            <Card title="Company" themeColor={themeColor}>
+              <InfoRow
+                icon={Building2}
+                label="Company Name"
+                value={company?.name || 'Unassigned'}
+                themeColor={themeColor}
+              />
+              <InfoRow
+                icon={TrendingUp}
+                label="Geo-fence Radius"
+                value={
+                  company?.radius_meters ? `${company.radius_meters}m` : 'N/A'
+                }
+                themeColor={themeColor}
+              />
+
+              {(isUnassigned || isRemoved) && (
+                <Pressable
+                  onPress={handleOpenModal}
+                  className="mt-3 flex-row items-center justify-center rounded-2xl py-3 px-4"
+                  style={{ backgroundColor: withAlpha(themeColor, '15') }}
+                >
+                  <Send color={themeColor} size={16} strokeWidth={2} />
+                  <Text
+                    className="font-bold text-[13px] ml-2"
+                    style={{ color: themeColor }}
+                  >
+                    Request a Company
+                  </Text>
+                </Pressable>
+              )}
+            </Card>
+          </Animated.View>
+        </ScrollView>
+
+        {/* Request Company Modal */}
+        <Modal
+          visible={isModalOpen}
+          animationType="slide"
+          transparent
+          statusBarTranslucent
+          onRequestClose={() => setIsModalOpen(false)}
+        >
+          <KeyboardAvoidingView behavior="padding" className="flex-1">
+            <View className="flex-1 justify-end">
+              <Pressable
+                className="absolute inset-0 bg-black/50"
+                onPress={() => setIsModalOpen(false)}
+              />
+              <View
+                className="bg-white rounded-t-3xl p-6"
+                style={{ maxHeight: '80%' }}
+              >
+                <ScrollView
+                  showsVerticalScrollIndicator={false}
+                  keyboardShouldPersistTaps="handled"
+                >
+                  <View className="flex-row justify-between items-center mb-4">
+                    <Text className="text-lg font-bold text-slate-900">
+                      Request Company Assignment
+                    </Text>
+                    <Pressable
+                      onPress={() => setIsModalOpen(false)}
+                      className="p-1"
+                    >
+                      <X size={20} color="#64748B" />
+                    </Pressable>
+                  </View>
+
+                  <Text className="text-xs text-slate-500 mb-4 leading-5">
+                    If your host training company is not listed or assigned yet,
+                    submit the company details below for coordinator approval.
+                  </Text>
+
+                  <View className="mb-4">
+                    <Text className="text-xs font-semibold text-slate-700 mb-1">
+                      Company Name
+                    </Text>
+                    <TextInput
+                      className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-800 text-sm"
+                      placeholder="e.g. Lagoon Tech Partners"
+                      placeholderTextColor="#94A3B8"
+                      value={companyName}
+                      onChangeText={setCompanyName}
+                    />
+                  </View>
+
+                  <View className="mb-6">
+                    <Text className="text-xs font-semibold text-slate-700 mb-1">
+                      Company Address
+                    </Text>
+                    <TextInput
+                      className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-800 text-sm"
+                      placeholder="e.g. Poblacion, El Salvador City"
+                      placeholderTextColor="#94A3B8"
+                      value={companyAddress}
+                      onChangeText={setCompanyAddress}
+                      multiline
+                      numberOfLines={2}
+                    />
+                  </View>
+
+                  <Pressable
+                    onPress={handleRequestSubmit}
+                    disabled={isSubmittingRequest || isFetchingLocation}
+                    className="rounded-2xl py-3.5 items-center justify-center flex-row"
+                    style={{
+                      backgroundColor: themeColor,
+                      opacity:
+                        isSubmittingRequest || isFetchingLocation ? 0.7 : 1,
+                    }}
+                  >
+                    {isSubmittingRequest ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : isFetchingLocation ? (
+                      <Text className="text-white font-bold text-sm">
+                        Acquiring Location...
+                      </Text>
+                    ) : (
+                      <>
+                        <Send color="#fff" size={16} />
+                        <Text className="text-white font-bold text-sm ml-2">
+                          Submit Request
+                        </Text>
+                      </>
+                    )}
+                  </Pressable>
+                </ScrollView>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
+
+        {/* Request Schedule Modal */}
+        <Modal
+          visible={isScheduleModalOpen}
+          animationType="slide"
+          transparent
+          statusBarTranslucent
+          onRequestClose={() => setIsScheduleModalOpen(false)}
+        >
+          <KeyboardAvoidingView behavior="padding" className="flex-1">
+            <View className="flex-1 justify-end">
+              <Pressable
+                className="absolute inset-0 bg-black/50"
+                onPress={() => setIsScheduleModalOpen(false)}
+              />
+              <View
+                className="bg-white rounded-t-3xl p-6"
+                style={{ maxHeight: '80%' }}
+              >
+                <ScrollView
+                  showsVerticalScrollIndicator={false}
+                  keyboardShouldPersistTaps="handled"
+                >
+                  <View className="flex-row justify-between items-center mb-4">
+                    <Text className="text-lg font-bold text-slate-900">
+                      Request Schedule
+                    </Text>
+                    <Pressable
+                      onPress={() => setIsScheduleModalOpen(false)}
+                      className="p-1"
+                    >
+                      <X size={20} color="#64748B" />
+                    </Pressable>
+                  </View>
+
+                  <Text className="text-xs text-slate-500 mb-4 leading-5">
+                    Propose a new schedule for your internship. This will be
+                    sent to your coordinator for approval.
+                  </Text>
+
+                  <View className="mb-4">
+                    <Text className="text-xs font-semibold text-slate-700 mb-1">
+                      Start Date (YYYY-MM-DD)*
+                    </Text>
+                    <Pressable
+                      onPress={() => setShowDatePicker(true)}
+                      className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3"
+                    >
+                      <Text
+                        className={
+                          reqStartDate
+                            ? 'text-slate-800 text-sm'
+                            : 'text-[#94A3B8] text-sm'
+                        }
+                      >
+                        {reqStartDate || 'Select a date'}
+                      </Text>
+                    </Pressable>
+                    {showDatePicker && (
+                      <DateTimePicker
+                        value={
+                          reqStartDate ? new Date(reqStartDate) : new Date()
+                        }
+                        mode="date"
+                        display="default"
+                        onChange={onDateChange}
+                      />
+                    )}
+                  </View>
+
+                  <View className="flex-row mb-4">
+                    <View className="flex-1 mr-2">
+                      <Text className="text-xs font-semibold text-slate-700 mb-1">
+                        Time In*
+                      </Text>
+                      <Pressable
+                        onPress={() => setShowTimeInPicker(true)}
+                        className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3"
+                      >
+                        <Text
+                          className={
+                            reqTimeIn
+                              ? 'text-slate-800 text-sm'
+                              : 'text-[#94A3B8] text-sm'
+                          }
+                        >
+                          {reqTimeIn
+                            ? formatTimeDisplay(reqTimeIn)
+                            : 'Select time'}
+                        </Text>
+                      </Pressable>
+                      {showTimeInPicker && (
+                        <DateTimePicker
+                          value={new Date()}
+                          mode="time"
+                          is24Hour
+                          display="default"
+                          onChange={onTimeInChange}
+                        />
+                      )}
+                    </View>
+                    <View className="flex-1 ml-2">
+                      <Text className="text-xs font-semibold text-slate-700 mb-1">
+                        Time Out*
+                      </Text>
+                      <Pressable
+                        onPress={() => setShowTimeOutPicker(true)}
+                        className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3"
+                      >
+                        <Text
+                          className={
+                            reqTimeOut
+                              ? 'text-slate-800 text-sm'
+                              : 'text-[#94A3B8] text-sm'
+                          }
+                        >
+                          {reqTimeOut
+                            ? formatTimeDisplay(reqTimeOut)
+                            : 'Select time'}
+                        </Text>
+                      </Pressable>
+                      {showTimeOutPicker && (
+                        <DateTimePicker
+                          value={new Date()}
+                          mode="time"
+                          is24Hour
+                          display="default"
+                          onChange={onTimeOutChange}
+                        />
+                      )}
+                    </View>
+                  </View>
+                  <View className="mb-6">
+                    <Text className="text-xs font-semibold text-slate-700 mb-1">
+                      Reason (Optional)
+                    </Text>
+                    <TextInput
+                      className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-800 text-sm"
+                      placeholder="Reason for schedule request..."
+                      placeholderTextColor="#94A3B8"
+                      value={reqReason}
+                      onChangeText={setReqReason}
+                      multiline
+                      numberOfLines={2}
+                    />
+                  </View>
+
+                  <Pressable
+                    onPress={handleScheduleSubmit}
+                    disabled={isSubmittingSchedule}
+                    className="rounded-2xl py-3.5 items-center justify-center flex-row"
+                    style={{
+                      backgroundColor: themeColor,
+                      opacity: isSubmittingSchedule ? 0.7 : 1,
+                    }}
+                  >
+                    {isSubmittingSchedule ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <>
+                        <Send color="#fff" size={16} />
+                        <Text className="text-white font-bold text-sm ml-2">
+                          Submit Schedule Request
+                        </Text>
+                      </>
+                    )}
+                  </Pressable>
+                </ScrollView>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
+
+        {/* Notification Modal */}
+        <Modal
+          visible={isNotificationModalOpen}
+          animationType="slide"
+          transparent
+          statusBarTranslucent
+          onRequestClose={() => setIsNotificationModalOpen(false)}
+        >
+          <View className="flex-1 justify-end">
+            <Pressable
+              className="absolute inset-0 bg-black/50"
+              onPress={() => setIsNotificationModalOpen(false)}
+            />
+            <View
+              className="bg-white rounded-t-3xl p-6"
+              style={{ maxHeight: '80%', minHeight: '50%' }}
+            >
+              <View className="flex-row justify-between items-center mb-6">
+                <Text className="text-lg font-bold text-slate-900">
+                  Notifications
+                </Text>
+                <Pressable
+                  onPress={() => setIsNotificationModalOpen(false)}
+                  className="p-1"
+                >
+                  <X size={20} color="#64748B" />
+                </Pressable>
+              </View>
+              <ScrollView showsVerticalScrollIndicator={false}>
+                {!notificationsData?.notifications ||
+                notificationsData.notifications.length === 0 ? (
+                  <View className="items-center justify-center py-10 mt-10">
+                    <View
+                      className="items-center justify-center rounded-full mb-3"
+                      style={{
+                        width: 48,
+                        height: 48,
+                        backgroundColor: '#F1F5F9',
+                      }}
+                    >
+                      <Bell color="#94A3B8" size={24} />
+                    </View>
+                    <Text className="text-slate-500 text-sm">
+                      No new notifications
+                    </Text>
+                  </View>
+                ) : (
+                  notificationsData.notifications.map(
+                    (notif: any, i: number) => (
+                      <View
+                        key={notif.id + '_' + i}
+                        className={
+                          'flex-row items-start mb-4 pb-4 border-b border-slate-100 ' +
+                          (notif.is_new ? 'bg-slate-50/50 -mx-6 px-6 pt-3' : '')
+                        }
+                      >
+                        <View
+                          className="items-center justify-center rounded-full mt-1 mr-3"
+                          style={{
+                            width: 32,
+                            height: 32,
+                            backgroundColor: withAlpha(themeColor, '12'),
+                          }}
+                        >
+                          <Bell color={themeColor} size={16} />
+                        </View>
+                        <View className="flex-1">
+                          <Text
+                            className={
+                              'text-[14px] ' +
+                              (notif.is_new
+                                ? 'font-semibold text-slate-900'
+                                : 'font-medium text-slate-800')
+                            }
+                          >
+                            {notif.title}
+                          </Text>
+                          <Text className="text-[12px] text-slate-500 mt-1">
+                            {notif.message}
+                          </Text>
+                          {notif.deadline_at && (
+                            <Text className="text-[11px] text-slate-400 mt-1.5 uppercase font-medium tracking-wide">
+                              Deadline:{' '}
+                              {new Date(notif.deadline_at).toLocaleDateString()}
+                            </Text>
+                          )}
+                        </View>
+                      </View>
+                    ),
+                  )
+                )}
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
+
+        {/* Face Enrollment Gate (Overrides Home entirely if not enrolled) */}
+        {faceNotEnrolled && (
+          <Modal
+            visible
+            animationType="fade"
+            statusBarTranslucent
+            onRequestClose={() => {}}
+          >
+            <View style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
+              <View
+                style={{
+                  paddingTop: 60,
+                  paddingBottom: 24,
+                  paddingHorizontal: 24,
+                  backgroundColor: themeColor,
+                  borderBottomLeftRadius: 36,
+                  borderBottomRightRadius: 36,
+                }}
+              >
+                <Text
+                  style={{ color: '#fff', fontSize: 22, fontWeight: 'bold' }}
+                >
+                  Face Enrollment Required
+                </Text>
+                <Text
+                  style={{
+                    color: 'rgba(255,255,255,0.7)',
+                    fontSize: 13,
+                    marginTop: 4,
+                  }}
+                >
+                  You must complete face enrollment before using the app.
+                </Text>
+              </View>
+              <View
+                style={{
+                  flex: 1,
+                  alignItems: 'center',
+                  padding: 24,
+                  paddingTop: 64,
+                }}
+              >
+                <View
+                  className="items-center justify-center rounded-full bg-slate-100 mb-6"
+                  style={{ width: 80, height: 80 }}
+                >
+                  <ScanFace color={themeColor} size={40} />
+                </View>
+                {enrollError && (
+                  <View
+                    className="w-full rounded-2xl p-4 mb-6 flex-row items-start"
+                    style={{
+                      backgroundColor: '#FEF2F2',
+                      borderWidth: 1,
+                      borderColor: '#FCA5A5',
+                    }}
+                  >
+                    <ShieldAlert
+                      color="#DC2626"
+                      size={20}
+                      style={{ marginTop: 2 }}
+                    />
+                    <View className="flex-1 ml-3">
+                      <Text className="text-[14px] font-bold text-red-700">
+                        {enrollError.title}
+                      </Text>
+                      <Text className="text-[13px] text-red-600 mt-1 leading-5">
+                        {enrollError.message}
+                      </Text>
+                    </View>
+                  </View>
+                )}
+                <Text
+                  style={{
+                    fontSize: 15,
+                    color: '#475569',
+                    textAlign: 'center',
+                    lineHeight: 24,
+                    marginBottom: 32,
+                  }}
+                >
+                  Your face ID is required for time tracking and identity
+                  verification. Please enroll your face to continue using the
+                  application.
+                </Text>
+
+                <Pressable
+                  onPress={() => {
+                    setEnrollError(null);
+                    setStartFaceEnroll(true);
+                  }}
+                  className="w-full rounded-2xl py-4 items-center"
+                  style={{ backgroundColor: themeColor }}
+                >
+                  <Text className="text-white font-bold text-base">
+                    {enrollError ? 'Try Again' : 'Start Face Enrollment'}
+                  </Text>
+                </Pressable>
+
+                <FaceEnrollModal
+                  visible={startFaceEnroll}
+                  onEnroll={handleEnroll}
+                  onError={message => {
+                    setStartFaceEnroll(false);
+                    setEnrollError({
+                      title: 'Could not capture photo',
+                      message,
+                    });
+                  }}
+                  isEnrolling={isEnrolling}
+                  themeColor={themeColor}
+                  title="Face Enrollment"
+                  captureLabel="Enroll My Face"
+                  onClose={() => setStartFaceEnroll(false)}
+                />
+              </View>
+            </View>
+          </Modal>
+        )}
+      </>
     );
 }

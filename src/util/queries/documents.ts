@@ -8,7 +8,8 @@ export const useDocuments = () => {
         queryKey: ['documents'],
         queryFn: async () => {
             const { data } = await api.get('/intern/documents');
-            return data;
+            // The screen calls .filter(), so always hand it a plain array
+            return Array.isArray(data) ? data : data?.data ?? [];
         },
     });
 };
@@ -41,13 +42,40 @@ export const useUploadDocument = () => {
     });
 };
 
+// With responseType 'arraybuffer', error bodies arrive as bytes, so
+// `err.response.data.message` is unreadable. Decode it into a normal message.
+const decodeErrorBody = (err: any): string | undefined => {
+    const raw = err?.response?.data;
+    if (!raw) return undefined;
+    try {
+        const bytes = new Uint8Array(raw);
+        let text = '';
+        for (let i = 0; i < Math.min(bytes.length, 500); i++) {
+            text += String.fromCharCode(bytes[i]);
+        }
+        const parsed = JSON.parse(text);
+        return parsed?.message;
+    } catch {
+        return undefined;
+    }
+};
+
 // `period` selects a specific past submission for a recurring document
 // (e.g. a prior week's report). Omit it to fetch the current/most recent one.
 export const downloadDocumentFile = async (documentId: string, period?: string) => {
-    const response = await api.get(`/intern/documents/download/${documentId}`, {
-        params: period ? { period } : undefined,
-        responseType: 'arraybuffer',
-    });
+    let response;
+    try {
+        response = await api.get(`/intern/documents/download/${documentId}`, {
+            params: period ? { period } : undefined,
+            responseType: 'arraybuffer',
+        });
+    } catch (err: any) {
+        const message = decodeErrorBody(err);
+        if (message) {
+            err.message = message;
+        }
+        throw err;
+    }
 
     const bytes = new Uint8Array(response.data);
     let binary = '';

@@ -85,7 +85,12 @@ export default function TimeLogs() {
   const [confirmBreakAction, setConfirmBreakAction] = useState<
     'break_out' | 'break_in' | null
   >(null);
-  const { userLocation, locationError, setUserLocation } = useLiveLocation();
+
+  const isClockedIn = Boolean(
+    serverStatus?.open_log && !serverStatus.open_log.time_out,
+  );
+  const { userLocation, locationError, setUserLocation } =
+    useLiveLocation(isClockedIn);
 
   // Offline Queue Merging
   const [offlineQueue, setOfflineQueue] = useState<any[]>([]);
@@ -558,14 +563,6 @@ export default function TimeLogs() {
               <Text className="text-[11px] font-bold uppercase tracking-[1.5px] text-slate-400">
                 Today's Timeline
               </Text>
-              <Pressable
-                onPress={() => navigation.navigate('TimeLogHistory')}
-                className="flex-row items-center"
-              >
-                <Text className="text-[11px] font-bold" style={{ color: themeColor }}>
-                  View History
-                </Text>
-              </Pressable>
             </View>
             <View className="px-5 pb-5">
               <InfoRow

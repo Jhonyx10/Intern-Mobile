@@ -3,11 +3,18 @@ import { PermissionsAndroid, Platform } from 'react-native';
 import Geolocation from '@react-native-community/geolocation';
 import { api } from '../api';
 
+// How often to send a ping while punched in. Must stay well under the
+// dashboard's 5-minute stale window.
+const PULSE_INTERVAL_MS = 15000;
+
 export function useLiveLocation(pulseEnabled: boolean = false) {
   const [userLocation, setUserLocation] = useState<[number, number] | null>(null);
   const [locationError, setLocationError] = useState<string | null>(null);
 
   const latestLocationRef = useRef<[number, number] | null>(null);
+  const latestAccuracyRef = useRef<number | null>(null);
+  const pingInFlightRef = useRef(false);
+
   useEffect(() => {
     latestLocationRef.current = userLocation;
   }, [userLocation]);
@@ -19,7 +26,8 @@ export function useLiveLocation(pulseEnabled: boolean = false) {
           PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
           {
             title: 'Location Permission',
-            message: 'This app needs your location to verify you are within the geofence before punching in/out.',
+            message:
+              'This app needs your location to verify you are within the geofence before punching in/out.',
             buttonPositive: 'Allow',
             buttonNegative: 'Deny',
           },
@@ -40,7 +48,9 @@ export function useLiveLocation(pulseEnabled: boolean = false) {
     const initLocation = async () => {
       const hasPermission = await requestLocationPermission();
       if (!hasPermission) {
-        setLocationError('Location permission denied. Please enable it in your device settings to punch in/out.');
+        setLocationError(
+          'Location permission denied. Please enable it in your device settings to punch in/out.',
+        );
         return;
       }
 
@@ -48,6 +58,7 @@ export function useLiveLocation(pulseEnabled: boolean = false) {
         Geolocation.getCurrentPosition(
           (position) => {
             setLocationError(null);
+            latestAccuracyRef.current = position.coords.accuracy ?? null;
             setUserLocation([position.coords.longitude, position.coords.latitude]);
           },
           (error) => {
@@ -55,7 +66,9 @@ export function useLiveLocation(pulseEnabled: boolean = false) {
             if (highAccuracy) {
               getPos(false);
             } else {
-              setLocationError('Unable to retrieve your current location. Please check that location services are enabled.');
+              setLocationError(
+                'Unable to retrieve your current location. Please check that location services are enabled.',
+              );
             }
           },
           { enableHighAccuracy: highAccuracy, timeout: 10000, maximumAge: 10000 },
@@ -67,6 +80,7 @@ export function useLiveLocation(pulseEnabled: boolean = false) {
       watchId = Geolocation.watchPosition(
         (position) => {
           setLocationError(null);
+          latestAccuracyRef.current = position.coords.accuracy ?? null;
           setUserLocation([position.coords.longitude, position.coords.latitude]);
         },
         (error) => console.error('Location watch error:', error),
@@ -84,20 +98,31 @@ export function useLiveLocation(pulseEnabled: boolean = false) {
   useEffect(() => {
     if (!pulseEnabled) return;
 
-    const id = setInterval(async () => {
+    const sendPing = async () => {
       const loc = latestLocationRef.current;
-      if (!loc) return;
+      if (!loc || pingInFlightRef.current) return;
+
+      pingInFlightRef.current = true;
       const [longitude, latitude] = loc;
       try {
-        await api.post('/intern/time/location', {
+        await api.post('/intern/intern-location', {
           latitude,
           longitude,
-          timestamp: new Date().toISOString(),
+          accuracy_meters: latestAccuracyRef.current,
         });
       } catch (err: any) {
-        console.warn('Location pulse failed:', err?.response?.status, err?.response?.data);
+        console.warn(
+          'Location pulse failed:',
+          err?.response?.status,
+          err?.response?.data,
+        );
+      } finally {
+        pingInFlightRef.current = false;
       }
-    }, 5000);
+    };
+
+    sendPing(); // first ping right away so the dashboard doesn't wait a full interval
+    const id = setInterval(sendPing, PULSE_INTERVAL_MS);
 
     return () => clearInterval(id); // stops on punch-out, and on unmount
   }, [pulseEnabled]);

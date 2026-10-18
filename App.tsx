@@ -6,7 +6,7 @@
  */
 
 import 'react-native-gesture-handler';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { StatusBar, StyleSheet, useColorScheme, View, Text, Pressable, Platform, Linking } from 'react-native';
 import {
   SafeAreaProvider,
@@ -20,15 +20,7 @@ import { ToastProvider } from './src/components/ToastProvider';
 import { useGpsStatus } from './src/util/hooks/useGpsStatus';
 import "./global.css";
 import { OfflineSyncProvider } from './src/components/OfflineSyncProvider';
-
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      retry: 1,
-      refetchOnWindowFocus: false,
-    },
-  },
-});
+import { queryClient } from './src/util/queryClient';
 
 function App() {
   const isDarkMode = useColorScheme() === 'dark';

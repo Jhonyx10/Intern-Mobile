@@ -273,11 +273,11 @@ export const Settings = () => {
 
   return (
     <KeyboardAvoidingView
-      className="flex-1"
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      style={{ backgroundColor: '#F8FAFC' }}
+      style={{ flex: 1, backgroundColor: '#F8FAFC' }}
+      behavior="padding"
     >
       <ScrollView
+        style={{ flex: 1 }}
         contentContainerStyle={{ paddingBottom: 60 }}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
@@ -327,7 +327,9 @@ export const Settings = () => {
                   {profileData?.user?.email_verified_at ? (
                     <View className="flex-row items-center rounded-lg bg-emerald-50 px-2 py-0.5">
                       <CheckCircle2 color="#10B981" size={12} />
-                      <Text className="ml-1 text-[10px] font-bold text-emerald-600">Verified</Text>
+                      <Text className="ml-1 text-[10px] font-bold text-emerald-600">
+                        Verified
+                      </Text>
                     </View>
                   ) : (
                     <Pressable
@@ -338,7 +340,9 @@ export const Settings = () => {
                       {sendVerification.isPending ? (
                         <ActivityIndicator color="#E11D48" size="small" />
                       ) : (
-                        <Text className="text-[10px] font-bold text-rose-600">Verify Email</Text>
+                        <Text className="text-[10px] font-bold text-rose-600">
+                          Verify Email
+                        </Text>
                       )}
                     </Pressable>
                   )}
@@ -354,35 +358,59 @@ export const Settings = () => {
           </Animated.View>
 
           {showVerifyModal && (
-            <Animated.View entering={FadeInDown.duration(200)} className="mb-5 rounded-2xl bg-white p-5" style={CARD_SHADOW}>
-              <Text className="text-[13px] font-bold text-slate-800 mb-1">Enter Verification Code</Text>
-              <Text className="text-[11px] text-slate-500 mb-4">Please check your inbox for the 4-digit code.</Text>
+            <Animated.View
+              entering={FadeInDown.duration(200)}
+              className="mb-5 rounded-2xl bg-white p-5"
+              style={CARD_SHADOW}
+            >
+              <Text className="text-[13px] font-bold text-slate-800 mb-1">
+                Enter Verification Code
+              </Text>
+              <Text className="text-[11px] text-slate-500 mb-4">
+                Please check your inbox for the 4-digit code.
+              </Text>
               <View className="flex-row items-center gap-3">
                 <TextInput
                   className="flex-1 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-center text-[15px] font-bold tracking-widest text-slate-800"
                   value={verificationCode}
-                  onChangeText={t => setVerificationCode(t.replace(/\D/g, '').slice(0, 4))}
+                  onChangeText={t =>
+                    setVerificationCode(t.replace(/\D/g, '').slice(0, 4))
+                  }
                   placeholder="0000"
                   keyboardType="number-pad"
                 />
                 <Pressable
                   onPress={handleVerifyCode}
-                  disabled={verifyEmail.isPending || verificationCode.length !== 4}
+                  disabled={
+                    verifyEmail.isPending || verificationCode.length !== 4
+                  }
                   className="items-center justify-center rounded-xl px-5 py-3 active:opacity-70"
-                  style={{ backgroundColor: (verifyEmail.isPending || verificationCode.length !== 4) ? '#E2E8F0' : themeColor }}
+                  style={{
+                    backgroundColor:
+                      verifyEmail.isPending || verificationCode.length !== 4
+                        ? '#E2E8F0'
+                        : themeColor,
+                  }}
                 >
                   {verifyEmail.isPending ? (
                     <ActivityIndicator color="#FFFFFF" size="small" />
                   ) : (
-                    <Text className="text-[13px] font-bold text-white">Confirm</Text>
+                    <Text className="text-[13px] font-bold text-white">
+                      Confirm
+                    </Text>
                   )}
                 </Pressable>
               </View>
               <Pressable
-                onPress={() => { setShowVerifyModal(false); setVerificationCode(''); }}
+                onPress={() => {
+                  setShowVerifyModal(false);
+                  setVerificationCode('');
+                }}
                 className="mt-4 items-center"
               >
-                <Text className="text-[11px] font-bold text-slate-400">Cancel</Text>
+                <Text className="text-[11px] font-bold text-slate-400">
+                  Cancel
+                </Text>
               </Pressable>
             </Animated.View>
           )}

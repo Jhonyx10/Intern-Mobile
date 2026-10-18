@@ -18,6 +18,10 @@ import TimeLogs from '../pages/TimeLogs';
 import { Documents } from '../pages/Documents';
 import Reports from '../pages/Reports';
 import { useUser } from '../util/queries/auth';
+import {
+    useUnreadDocumentNotifications,
+    useMarkInAppNotificationsRead,
+} from '../util/queries/notifications';
 
 function withAlpha(hex: string, alpha: string) {
     return `${hex}${alpha}`;
@@ -56,6 +60,19 @@ function CustomTabBar({ state, navigation }: BottomTabBarProps) {
     const tabWidth = barWidth / Math.max(tabCount, 1);
 
     const indicatorX = useSharedValue(0);
+
+    const unreadDocNotifs = useUnreadDocumentNotifications();
+    const hasDocBadge = unreadDocNotifs.length > 0;
+    const markAllRead = useMarkInAppNotificationsRead();
+
+    // Clear the badge as soon as the Documents tab becomes focused
+    useEffect(() => {
+        const focusedRoute = state.routes[state.index];
+        if (focusedRoute?.name === 'Documents' && hasDocBadge) {
+            markAllRead.mutate();
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [state.index, hasDocBadge]);
 
     useEffect(() => {
         if (tabWidth > 0) {
@@ -107,6 +124,7 @@ function CustomTabBar({ state, navigation }: BottomTabBarProps) {
                 const isFocused = state.index === index;
                 const Icon = ICONS[route.name] ?? HomeIcon;
                 const label = LABELS[route.name] ?? route.name;
+                const showBadge = route.name === 'Documents' && hasDocBadge;
 
                 return (
                     <TabBarButton
@@ -115,6 +133,7 @@ function CustomTabBar({ state, navigation }: BottomTabBarProps) {
                         label={label}
                         Icon={Icon}
                         themeColor={themeColor}
+                        showBadge={showBadge}
                         onPress={() => {
                             const event = navigation.emit({
                                 type: 'tabPress',
@@ -138,6 +157,7 @@ function TabBarButton({
     label,
     Icon,
     themeColor,
+    showBadge,
     onPress,
 }: {
     isFocused: boolean;
@@ -148,6 +168,7 @@ function TabBarButton({
         strokeWidth: number;
     }>;
     themeColor: string;
+    showBadge?: boolean;
     onPress: () => void;
 }) {
     const scale = useSharedValue(1);
@@ -178,6 +199,21 @@ function TabBarButton({
                     size={22}
                     strokeWidth={isFocused ? 2.4 : 2}
                 />
+                {showBadge && (
+                    <View
+                        style={{
+                            position: 'absolute',
+                            top: -2,
+                            right: -4,
+                            width: 8,
+                            height: 8,
+                            borderRadius: 4,
+                            backgroundColor: '#EF4444',
+                            borderWidth: 1.5,
+                            borderColor: '#fff',
+                        }}
+                    />
+                )}
             </Animated.View>
             <Animated.Text
                 style={[labelStyle, { color: isFocused ? themeColor : INACTIVE_COLOR }]}
@@ -191,17 +227,17 @@ function TabBarButton({
 
 export default function BottomTabs() {
     return (
-        <Tab.Navigator
-            tabBar={(props) => <CustomTabBar {...props} />}
-            screenOptions={{
-                headerShown: false,
-            }}
-        >
-            <Tab.Screen name="Home" component={Home} />
-            <Tab.Screen name="TimeLogs" component={TimeLogs} />
-            <Tab.Screen name="Documents" component={Documents} />
-            <Tab.Screen name="Reports" component={Reports} />
-            <Tab.Screen name="Profile" component={Profile} />
-        </Tab.Navigator>
+      <Tab.Navigator
+        tabBar={props => <CustomTabBar {...props} />}
+        screenOptions={{
+          headerShown: false,
+        }}
+      >
+        <Tab.Screen name="Home" component={Home} />
+        <Tab.Screen name="TimeLogs" component={TimeLogs} />
+        <Tab.Screen name="Reports" component={Reports} />
+        <Tab.Screen name="Documents" component={Documents} />
+        <Tab.Screen name="Profile" component={Profile} />
+      </Tab.Navigator>
     );
 }

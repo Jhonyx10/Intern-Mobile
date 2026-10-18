@@ -1,437 +1,745 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
-    Text,
-    View,
-    FlatList,
-    ActivityIndicator,
-    Pressable,
-    RefreshControl,
-    Share,
-    Platform,
+  Text,
+  View,
+  FlatList,
+  ScrollView,
+  Modal,
+  ActivityIndicator,
+  Pressable,
+  RefreshControl,
+  Share,
+  Platform,
 } from 'react-native';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import LinearGradient from 'react-native-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
-    Clock,
-    Coffee,
-    Sunrise,
-    LogIn,
-    LogOut,
-    AlertCircle,
-    FileText,
-    BarChart2,
-    Calendar as CalendarIcon,
-    List as ListIcon,
-    Download
+  Clock,
+  Coffee,
+  Sunrise,
+  LogIn,
+  LogOut,
+  AlertCircle,
+  FileText,
+  BarChart2,
+  Calendar as CalendarIcon,
+  List as ListIcon,
+  Download,
+  ChevronLeft,
+  ChevronRight,
+  X,
 } from 'lucide-react-native';
 import { Calendar } from 'react-native-calendars';
 import ReactNativeBlobUtil from 'react-native-blob-util';
+import { addWeeks, isSameWeek } from 'date-fns';
 
 import ConfirmModal from '../components/modal/ConfirmModal';
 
 import { RootStackParamList } from '../components/Navigation';
-import { useTimeLogsHistory, TimeLogEntry, TimeLogPreset } from '../util/queries/timelog';
+import {
+  useTimeLogsHistory,
+  TimeLogEntry,
+  TimeLogPreset,
+} from '../util/queries/timelog';
 import { useUser } from '../util/queries/auth';
 import { withAlpha, formatLogTime } from '../util/timeLogHelpers';
+import {
+  exportTimeLogReportPdf,
+  formatWeekLabel,
+  getWeekStart,
+  filterLogsToWeek,
+} from '../util/timeLogReportPdf';
 
 function formatLogDate(iso: string | null) {
-    if (!iso) return 'Unknown date';
-    const d = new Date(iso);
-    return d.toLocaleDateString(undefined, {
-        weekday: 'short',
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric',
-    });
+  if (!iso) return 'Unknown date';
+  const d = new Date(iso);
+  return d.toLocaleDateString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
 }
 
 function formatISODate(iso: string | null) {
-    if (!iso) return '';
-    return iso.split('T')[0];
+  if (!iso) return '';
+  return iso.split('T')[0];
+}
+
+// 'YYYY-MM-DD' -> "Fri, Oct 16, 2026" (no timezone shift)
+function formatDayLabel(dateStr: string) {
+  if (!dateStr) return '';
+  return new Date(dateStr + 'T00:00:00').toLocaleDateString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
 }
 
 const PRESETS: { key: TimeLogPreset; label: string }[] = [
-    { key: 'daily', label: 'Daily' },
-    { key: 'weekly', label: 'Weekly' },
-    { key: 'monthly', label: 'Monthly' },
-    { key: 'yearly', label: 'Yearly' },
+  { key: 'daily', label: 'Daily' },
+  { key: 'weekly', label: 'Weekly' },
+  { key: 'monthly', label: 'Monthly' },
+  { key: 'yearly', label: 'Yearly' },
 ];
 
-function LogCard({ log, themeColor }: { log: TimeLogEntry; themeColor: string }) {
-    const isAutoClosed = log.verification_method === 'auto_closed_missed_punch_out';
+// Same card as Time Log History
+function LogCard({
+  log,
+  themeColor,
+}: {
+  log: TimeLogEntry;
+  themeColor: string;
+}) {
+  const isAutoClosed =
+    log.verification_method === 'auto_closed_missed_punch_out';
 
-    return (
-        <View
-            className="rounded-3xl bg-white mb-4"
+  return (
+    <View
+      className="rounded-3xl bg-white mb-4"
+      style={{
+        shadowColor: '#0F172A',
+        shadowOpacity: 0.06,
+        shadowRadius: 14,
+        shadowOffset: { width: 0, height: 5 },
+        elevation: 2,
+        borderWidth: 1,
+        borderColor: '#F1F5F9',
+      }}
+    >
+      <View className="px-5 pt-5 pb-2 flex-row items-center justify-between">
+        <Text className="text-[13px] font-bold text-slate-800">
+          {formatLogDate(log.time_in)}
+        </Text>
+        {log.is_open ? (
+          <View className="rounded-full px-3 py-1 bg-green-50">
+            <Text className="text-[10px] font-bold uppercase tracking-wide text-green-700">
+              In Progress
+            </Text>
+          </View>
+        ) : isAutoClosed ? (
+          <View className="rounded-full px-3 py-1 bg-amber-50">
+            <Text className="text-[10px] font-bold uppercase tracking-wide text-amber-700">
+              Auto-closed
+            </Text>
+          </View>
+        ) : (
+          <View className="rounded-full px-3 py-1 bg-slate-50">
+            <Text className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
+              Completed
+            </Text>
+          </View>
+        )}
+      </View>
+
+      <View className="px-5 pb-4">
+        <View className="flex-row items-center py-2">
+          <View
+            className="items-center justify-center rounded-full mr-3"
             style={{
-                shadowColor: '#0F172A',
-                shadowOpacity: 0.06,
-                shadowRadius: 14,
-                shadowOffset: { width: 0, height: 5 },
-                elevation: 2,
-                borderWidth: 1,
-                borderColor: '#F1F5F9',
+              width: 30,
+              height: 30,
+              backgroundColor: withAlpha(themeColor, '12'),
             }}
-        >
-            <View className="px-5 pt-5 pb-2 flex-row items-center justify-between">
-                <Text className="text-[13px] font-bold text-slate-800">
-                    {formatLogDate(log.time_in)}
-                </Text>
-                {log.is_open ? (
-                    <View className="rounded-full px-3 py-1 bg-green-50">
-                        <Text className="text-[10px] font-bold uppercase tracking-wide text-green-700">
-                            In Progress
-                        </Text>
-                    </View>
-                ) : isAutoClosed ? (
-                    <View className="rounded-full px-3 py-1 bg-amber-50">
-                        <Text className="text-[10px] font-bold uppercase tracking-wide text-amber-700">
-                            Auto-closed
-                        </Text>
-                    </View>
-                ) : (
-                    <View className="rounded-full px-3 py-1 bg-slate-50">
-                        <Text className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
-                            Completed
-                        </Text>
-                    </View>
-                )}
-            </View>
-
-            <View className="px-5 pb-4">
-                <View className="flex-row items-center py-2">
-                    <View
-                        className="items-center justify-center rounded-full mr-3"
-                        style={{ width: 30, height: 30, backgroundColor: withAlpha(themeColor, '12') }}
-                    >
-                        <LogIn color={themeColor} size={14} strokeWidth={2.25} />
-                    </View>
-                    <Text className="text-[12px] text-slate-400 flex-1">Time In</Text>
-                    <Text className="text-[13px] font-semibold text-slate-800">
-                        {formatLogTime(log.time_in)}
-                    </Text>
-                </View>
-
-                {(log.break_out || log.break_in) && (
-                    <>
-                        <View className="flex-row items-center py-2">
-                            <View
-                                className="items-center justify-center rounded-full mr-3"
-                                style={{ width: 30, height: 30, backgroundColor: withAlpha(themeColor, '12') }}
-                            >
-                                <Coffee color={themeColor} size={14} strokeWidth={2.25} />
-                            </View>
-                            <Text className="text-[12px] text-slate-400 flex-1">Break Out</Text>
-                            <Text className="text-[13px] font-semibold text-slate-800">
-                                {formatLogTime(log.break_out)}
-                            </Text>
-                        </View>
-                        <View className="flex-row items-center py-2">
-                            <View
-                                className="items-center justify-center rounded-full mr-3"
-                                style={{ width: 30, height: 30, backgroundColor: withAlpha(themeColor, '12') }}
-                            >
-                                <Sunrise color={themeColor} size={14} strokeWidth={2.25} />
-                            </View>
-                            <Text className="text-[12px] text-slate-400 flex-1">Break In</Text>
-                            <Text className="text-[13px] font-semibold text-slate-800">
-                                {formatLogTime(log.break_in)}
-                            </Text>
-                        </View>
-                    </>
-                )}
-
-                <View className="flex-row items-center py-2">
-                    <View
-                        className="items-center justify-center rounded-full mr-3"
-                        style={{ width: 30, height: 30, backgroundColor: withAlpha(themeColor, '12') }}
-                    >
-                        <LogOut color={themeColor} size={14} strokeWidth={2.25} />
-                    </View>
-                    <Text className="text-[12px] text-slate-400 flex-1">Time Out</Text>
-                    <Text className="text-[13px] font-semibold text-slate-800">
-                        {log.is_open ? '—' : formatLogTime(log.time_out)}
-                    </Text>
-                </View>
-
-                <View className="flex-row items-center justify-between mt-2 pt-3 border-t border-slate-100">
-                    <View className="flex-row items-center">
-                        <Clock color="#94A3B8" size={13} />
-                        <Text className="ml-1.5 text-[12px] font-semibold text-slate-500">
-                            {log.duration_hours != null ? `${log.duration_hours} hrs` : '—'}
-                        </Text>
-                    </View>
-                </View>
-            </View>
+          >
+            <LogIn color={themeColor} size={14} strokeWidth={2.25} />
+          </View>
+          <Text className="text-[12px] text-slate-400 flex-1">Time In</Text>
+          <Text className="text-[13px] font-semibold text-slate-800">
+            {formatLogTime(log.time_in)}
+          </Text>
         </View>
-    );
+
+        {(log.break_out || log.break_in) && (
+          <>
+            <View className="flex-row items-center py-2">
+              <View
+                className="items-center justify-center rounded-full mr-3"
+                style={{
+                  width: 30,
+                  height: 30,
+                  backgroundColor: withAlpha(themeColor, '12'),
+                }}
+              >
+                <Coffee color={themeColor} size={14} strokeWidth={2.25} />
+              </View>
+              <Text className="text-[12px] text-slate-400 flex-1">
+                Break Out
+              </Text>
+              <Text className="text-[13px] font-semibold text-slate-800">
+                {formatLogTime(log.break_out)}
+              </Text>
+            </View>
+            <View className="flex-row items-center py-2">
+              <View
+                className="items-center justify-center rounded-full mr-3"
+                style={{
+                  width: 30,
+                  height: 30,
+                  backgroundColor: withAlpha(themeColor, '12'),
+                }}
+              >
+                <Sunrise color={themeColor} size={14} strokeWidth={2.25} />
+              </View>
+              <Text className="text-[12px] text-slate-400 flex-1">
+                Break In
+              </Text>
+              <Text className="text-[13px] font-semibold text-slate-800">
+                {formatLogTime(log.break_in)}
+              </Text>
+            </View>
+          </>
+        )}
+
+        <View className="flex-row items-center py-2">
+          <View
+            className="items-center justify-center rounded-full mr-3"
+            style={{
+              width: 30,
+              height: 30,
+              backgroundColor: withAlpha(themeColor, '12'),
+            }}
+          >
+            <LogOut color={themeColor} size={14} strokeWidth={2.25} />
+          </View>
+          <Text className="text-[12px] text-slate-400 flex-1">Time Out</Text>
+          <Text className="text-[13px] font-semibold text-slate-800">
+            {log.is_open ? '—' : formatLogTime(log.time_out)}
+          </Text>
+        </View>
+
+        <View className="flex-row items-center justify-between mt-2 pt-3 border-t border-slate-100">
+          <View className="flex-row items-center">
+            <Clock color="#94A3B8" size={13} />
+            <Text className="ml-1.5 text-[12px] font-semibold text-slate-500">
+              {log.duration_hours != null ? `${log.duration_hours} hrs` : '—'}
+            </Text>
+          </View>
+          {log.task_photos_count > 0 && (
+            <View className="flex-row items-center">
+              <FileText color="#94A3B8" size={13} />
+              <Text className="ml-1.5 text-[12px] font-medium text-slate-500">
+                {log.submitted_task_photos_count}/{log.task_photos_count} photo
+                {log.task_photos_count === 1 ? '' : 's'}
+              </Text>
+            </View>
+          )}
+        </View>
+
+        {log.task_note && (
+          <Text
+            className="text-[12px] text-slate-500 mt-2 leading-5"
+            numberOfLines={3}
+          >
+            {log.task_note}
+          </Text>
+        )}
+
+        {isAutoClosed && (
+          <View className="flex-row items-start mt-3 rounded-2xl bg-amber-50 px-3 py-2.5">
+            <AlertCircle color="#D97706" size={14} style={{ marginTop: 1 }} />
+            <Text className="ml-2 text-[11px] text-amber-700 flex-1 leading-4">
+              This shift was automatically timed out because a punch-out was
+              missed.
+            </Text>
+          </View>
+        )}
+      </View>
+    </View>
+  );
 }
 
 export default function Reports() {
-    const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-    const { data: userData } = useUser();
-    const themeColor = userData?.settings?.theme_color || '#1D4ED8';
-    const [preset, setPreset] = useState<TimeLogPreset>('daily');
-    const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list');
-    const [selectedDate, setSelectedDate] = useState<string>('');
-    const [infoModal, setInfoModal] = useState<{ visible: boolean; title: string; message: string }>({ visible: false, title: '', message: '' });
+  const navigation =
+    useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const { data: userData } = useUser();
+  const themeColor = userData?.settings?.theme_color || '#1D4ED8';
+  const [preset, setPreset] = useState<TimeLogPreset>('daily');
+  const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list');
+  const [selectedDate, setSelectedDate] = useState<string>('');
+  const [dateModalOpen, setDateModalOpen] = useState(false);
+  const [infoModal, setInfoModal] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+  }>({ visible: false, title: '', message: '' });
 
-    const {
-        data,
-        isLoading,
-        isError,
-        refetch,
-        isRefetching,
-        fetchNextPage,
-        hasNextPage,
-        isFetchingNextPage,
-    } = useTimeLogsHistory(preset);
+  // Weekly PDF report state
+  const [weekStart, setWeekStart] = useState<Date>(getWeekStart());
+  const [exportingPdf, setExportingPdf] = useState(false);
+  const isCurrentWeek = isSameWeek(weekStart, new Date(), { weekStartsOn: 1 });
 
-    const logs = data?.pages.flatMap((p) => p.logs) ?? [];
-    const totalCount = data?.pages[0]?.total_count ?? 0;
-    const totalHours = logs.reduce((acc, l) => acc + (l.duration_hours ?? 0), 0);
+  const isCalendar = viewMode === 'calendar';
 
-    const handleExportCSV = async () => {
-        if (!logs.length) {
-            setInfoModal({ visible: true, title: 'Empty', message: 'No time logs available to export for this period.' });
-            return;
-        }
+  // List view honours the Daily/Weekly/... filter. Calendar view needs every
+  // log (so past days are marked), so it loads without a preset.
+  const {
+    data,
+    isLoading,
+    isError,
+    refetch,
+    isRefetching,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useTimeLogsHistory(isCalendar ? undefined : preset);
 
-        const headers = ["Date", "Session", "Time In", "Time Out", "Hours"];
-        const csvRows = logs.map(log => {
-            return [
-                formatISODate(log.time_in),
-                log.session_period || 'Regular',
-                formatLogTime(log.time_in).replace(/,/g, ''),
-                formatLogTime(log.time_out).replace(/,/g, ''),
-                log.duration_hours || '0'
-            ].join(',');
-        });
+  // In calendar mode, keep loading pages until every log is in
+  useEffect(() => {
+    if (isCalendar && hasNextPage && !isFetchingNextPage) {
+      fetchNextPage();
+    }
+  }, [isCalendar, hasNextPage, isFetchingNextPage, fetchNextPage]);
 
-        const csvContent = [headers.join(','), ...csvRows].join('\n');
-        const fileName = `DTR_Export_${preset}.csv`;
-        const path = `${ReactNativeBlobUtil.fs.dirs.CacheDir}/${fileName}`;
+  const logs = data?.pages.flatMap(p => p.logs) ?? [];
+  const totalCount = data?.pages[0]?.total_count ?? 0;
+  const totalHours = logs.reduce((acc, l) => acc + (l.duration_hours ?? 0), 0);
 
-        try {
-            await ReactNativeBlobUtil.fs.writeFile(path, csvContent, 'utf8');
-            if (Platform.OS === 'ios') {
-                await ReactNativeBlobUtil.ios.presentOptionsMenu(path);
-            } else {
-                await Share.share({
-                    url: `file://${path}`,
-                    title: fileName,
-                });
-            }
-        } catch (e: any) {
-            console.error('Export Error:', e);
-            setInfoModal({ visible: true, title: 'Export Failed', message: 'There was an error generating the export file.' });
-        }
-    };
-
-    // Prepare Calendar marked dates
-    const markedDates: any = {};
-    if (viewMode === 'calendar') {
-        logs.forEach(log => {
-            const dateStr = formatISODate(log.time_in);
-            if (dateStr) {
-                markedDates[dateStr] = {
-                    marked: true,
-                    dotColor: themeColor,
-                    selected: selectedDate === dateStr,
-                    selectedColor: selectedDate === dateStr ? themeColor : undefined,
-                };
-            }
-        });
-        if (selectedDate && !markedDates[selectedDate]) {
-            markedDates[selectedDate] = {
-                selected: true,
-                selectedColor: themeColor,
-            };
-        }
+  const handleExportCSV = async () => {
+    if (!logs.length) {
+      setInfoModal({
+        visible: true,
+        title: 'Empty',
+        message: 'No time logs available to export for this period.',
+      });
+      return;
     }
 
-    const logsForSelectedDate = selectedDate
-        ? logs.filter(l => formatISODate(l.time_in) === selectedDate)
-        : [];
+    const headers = ['Date', 'Session', 'Time In', 'Time Out', 'Hours'];
+    const csvRows = logs.map(log => {
+      return [
+        formatISODate(log.time_in),
+        log.session_period || 'Regular',
+        formatLogTime(log.time_in).replace(/,/g, ''),
+        formatLogTime(log.time_out).replace(/,/g, ''),
+        log.duration_hours || '0',
+      ].join(',');
+    });
 
-    return (
-        <View style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
-            <Animated.View entering={FadeInDown.duration(400)}>
-                <LinearGradient
-                    colors={[themeColor, withAlpha(themeColor, 'CC')]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={{
-                        paddingTop: 52,
-                        paddingBottom: 24,
-                        paddingHorizontal: 24,
-                        borderBottomLeftRadius: 36,
-                        borderBottomRightRadius: 36,
-                    }}
+    const csvContent = [headers.join(','), ...csvRows].join('\n');
+    const fileName = `DTR_Export_${isCalendar ? 'all' : preset}.csv`;
+    const path = `${ReactNativeBlobUtil.fs.dirs.CacheDir}/${fileName}`;
+
+    try {
+      await ReactNativeBlobUtil.fs.writeFile(path, csvContent, 'utf8');
+      if (Platform.OS === 'ios') {
+        await ReactNativeBlobUtil.ios.presentOptionsMenu(path);
+      } else {
+        await Share.share({
+          url: `file://${path}`,
+          title: fileName,
+        });
+      }
+    } catch (e: any) {
+      console.error('Export Error:', e);
+      setInfoModal({
+        visible: true,
+        title: 'Export Failed',
+        message: 'There was an error generating the export file.',
+      });
+    }
+  };
+
+  const handleExportPDF = async () => {
+    try {
+      setExportingPdf(true);
+
+      // Load every page so the whole week is included
+      let pages = data?.pages ?? [];
+      let more = !!hasNextPage;
+      while (more) {
+        const res = await fetchNextPage();
+        pages = res.data?.pages ?? pages;
+        more = !!res.hasNextPage;
+      }
+      const allLogs = pages.flatMap(p => p.logs);
+      const weekLogs = filterLogsToWeek(allLogs, weekStart);
+
+      if (!weekLogs.length) {
+        setInfoModal({
+          visible: true,
+          title: 'Empty',
+          message: isCurrentWeek
+            ? 'No time logs found for this week.'
+            : 'No time logs found for this week. For past weeks, switch the filter to Monthly or Yearly so older logs are loaded.',
+        });
+        return;
+      }
+
+      await exportTimeLogReportPdf({
+        studentName: userData?.user?.name ?? 'Student', // adjust to your user field
+        logs: weekLogs,
+        weekStart,
+        // weekNo: 3,
+        // verifiedBy: { name: '...', organization: '...' },
+        // notedBy: { name: '...', position: '...' },
+      });
+    } catch (e) {
+      console.error('PDF Export Error:', e);
+      setInfoModal({
+        visible: true,
+        title: 'Export Failed',
+        message: 'There was an error generating the PDF.',
+      });
+    } finally {
+      setExportingPdf(false);
+    }
+  };
+
+  // Calendar marked dates
+  const markedDates: any = {};
+  if (isCalendar) {
+    logs.forEach(log => {
+      const dateStr = formatISODate(log.time_in);
+      if (dateStr) {
+        markedDates[dateStr] = {
+          marked: true,
+          dotColor: themeColor,
+          selected: selectedDate === dateStr,
+          selectedColor: selectedDate === dateStr ? themeColor : undefined,
+        };
+      }
+    });
+    if (selectedDate && !markedDates[selectedDate]) {
+      markedDates[selectedDate] = {
+        selected: true,
+        selectedColor: themeColor,
+      };
+    }
+  }
+
+  const logsForSelectedDate = selectedDate
+    ? logs.filter(l => formatISODate(l.time_in) === selectedDate)
+    : [];
+
+  const selectedDayHours = logsForSelectedDate.reduce(
+    (acc, l) => acc + (l.duration_hours ?? 0),
+    0,
+  );
+
+  const closeDateModal = () => setDateModalOpen(false);
+
+  return (
+    <View style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
+      <Animated.View entering={FadeInDown.duration(400)}>
+        <LinearGradient
+          colors={[themeColor, withAlpha(themeColor, 'CC')]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={{
+            paddingTop: 52,
+            paddingBottom: 24,
+            paddingHorizontal: 24,
+            borderBottomLeftRadius: 36,
+            borderBottomRightRadius: 36,
+          }}
+        >
+          <View className="flex-row items-center justify-between mb-4">
+            <View className="flex-row items-center">
+              <BarChart2 color="#fff" size={22} strokeWidth={2} />
+              <Text className="text-white text-[22px] font-bold ml-2">
+                Reports
+              </Text>
+            </View>
+            <View className="flex-row items-center gap-3">
+              <Pressable
+                onPress={() =>
+                  setViewMode(prev => (prev === 'list' ? 'calendar' : 'list'))
+                }
+                className="w-10 h-10 rounded-full bg-white/20 items-center justify-center"
+              >
+                {viewMode === 'list' ? (
+                  <CalendarIcon color="#fff" size={18} strokeWidth={2} />
+                ) : (
+                  <ListIcon color="#fff" size={18} strokeWidth={2} />
+                )}
+              </Pressable>
+              <Pressable
+                onPress={handleExportPDF}
+                disabled={exportingPdf}
+                className="w-10 h-10 rounded-full bg-white/20 items-center justify-center"
+              >
+                {exportingPdf ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <FileText color="#fff" size={18} strokeWidth={2} />
+                )}
+              </Pressable>
+              <Pressable
+                onPress={handleExportCSV}
+                className="w-10 h-10 rounded-full bg-white/20 items-center justify-center"
+              >
+                <Download color="#fff" size={18} strokeWidth={2} />
+              </Pressable>
+            </View>
+          </View>
+
+          <Text className="text-white/80 text-[13px] mb-4">
+            {isCalendar
+              ? 'Tap a date to see its time logs'
+              : totalCount > 0
+              ? `${totalCount} entries · ${totalHours.toFixed(
+                  1,
+                )} hrs total (Filtered by ${preset})`
+              : `Viewing ${preset} DTR summary`}
+          </Text>
+
+          {/* Week selector for the PDF report */}
+          <View
+            className="flex-row items-center justify-between rounded-2xl px-2 py-1.5 mb-3"
+            style={{ backgroundColor: 'rgba(255,255,255,0.15)' }}
+          >
+            <Pressable
+              onPress={() => setWeekStart(w => addWeeks(w, -1))}
+              className="p-2"
+            >
+              <ChevronLeft color="#fff" size={18} />
+            </Pressable>
+            <View className="items-center">
+              <Text className="text-white/70 text-[10px] font-bold uppercase tracking-wide">
+                PDF report week
+              </Text>
+              <Text className="text-white text-[13px] font-bold">
+                {formatWeekLabel(weekStart)}
+              </Text>
+            </View>
+            <Pressable
+              onPress={() => setWeekStart(w => addWeeks(w, 1))}
+              disabled={isCurrentWeek}
+              className="p-2"
+              style={{ opacity: isCurrentWeek ? 0.3 : 1 }}
+            >
+              <ChevronRight color="#fff" size={18} />
+            </Pressable>
+          </View>
+
+          {/* Preset toggle (list view only) */}
+          {!isCalendar && (
+            <View
+              className="flex-row rounded-2xl p-1"
+              style={{ backgroundColor: 'rgba(255,255,255,0.15)' }}
+            >
+              {PRESETS.map(({ key, label }) => (
+                <Pressable
+                  key={key}
+                  onPress={() => setPreset(key)}
+                  className="flex-1 items-center justify-center rounded-xl py-2"
+                  style={
+                    preset === key ? { backgroundColor: '#fff' } : undefined
+                  }
                 >
-                    <View className="flex-row items-center justify-between mb-4">
-                        <View className="flex-row items-center">
-                            <BarChart2 color="#fff" size={22} strokeWidth={2} />
-                            <Text className="text-white text-[22px] font-bold ml-2">Reports</Text>
-                        </View>
-                        <View className="flex-row items-center gap-3">
-                            <Pressable
-                                onPress={() => setViewMode(prev => prev === 'list' ? 'calendar' : 'list')}
-                                className="w-10 h-10 rounded-full bg-white/20 items-center justify-center"
-                            >
-                                {viewMode === 'list' ? (
-                                    <CalendarIcon color="#fff" size={18} strokeWidth={2} />
-                                ) : (
-                                    <ListIcon color="#fff" size={18} strokeWidth={2} />
-                                )}
-                            </Pressable>
-                            <Pressable
-                                onPress={handleExportCSV}
-                                className="w-10 h-10 rounded-full bg-white/20 items-center justify-center"
-                            >
-                                <Download color="#fff" size={18} strokeWidth={2} />
-                            </Pressable>
-                        </View>
-                    </View>
-
-                    <Text className="text-white/80 text-[13px] mb-4">
-                        {totalCount > 0 ? `${totalCount} entries · ${totalHours.toFixed(1)} hrs total (Filtered by ${preset})` : `Viewing ${preset} DTR summary`}
-                    </Text>
-
-                    {/* Preset Toggle */}
-                    <View
-                        className="flex-row rounded-2xl p-1"
-                        style={{ backgroundColor: 'rgba(255,255,255,0.15)' }}
-                    >
-                        {PRESETS.map(({ key, label }) => (
-                            <Pressable
-                                key={key}
-                                onPress={() => { setPreset(key); setSelectedDate(''); }}
-                                className="flex-1 items-center justify-center rounded-xl py-2"
-                                style={preset === key ? { backgroundColor: '#fff' } : undefined}
-                            >
-                                <Text
-                                    className="text-[13px] font-bold"
-                                    style={{ color: preset === key ? themeColor : 'rgba(255,255,255,0.85)' }}
-                                >
-                                    {label}
-                                </Text>
-                            </Pressable>
-                        ))}
-                    </View>
-                </LinearGradient>
-            </Animated.View>
-
-            {isLoading ? (
-                <View className="flex-1 items-center justify-center">
-                    <ActivityIndicator size="large" color={themeColor} />
-                </View>
-            ) : isError ? (
-                <View className="flex-1 items-center justify-center px-8">
-                    <AlertCircle color="#94A3B8" size={48} />
-                    <Text className="text-slate-500 text-center text-base mt-4">
-                        Unable to load report data.
-                    </Text>
-                    <Pressable
-                        onPress={() => refetch()}
-                        className="mt-4 px-6 py-3 rounded-full"
-                        style={{ backgroundColor: themeColor }}
-                    >
-                        <Text className="text-white font-semibold">Retry</Text>
-                    </Pressable>
-                </View>
-            ) : viewMode === 'list' ? (
-                <FlatList
-                    data={logs}
-                    keyExtractor={(item) => String(item.id)}
-                    contentContainerStyle={{ padding: 20, paddingBottom: 106 }}
-                    renderItem={({ item, index }) => (
-                        <Animated.View entering={FadeInUp.duration(350).delay(Math.min(index, 6) * 40)}>
-                            <Pressable onPress={() => navigation.navigate('TimeLogDetails', { timeLogId: item.id })}>
-                                <LogCard log={item} themeColor={themeColor} />
-                            </Pressable>
-                        </Animated.View>
-                    )}
-                    refreshControl={
-                        <RefreshControl
-                            refreshing={isRefetching}
-                            onRefresh={() => { refetch(); }}
-                            tintColor={themeColor}
-                            colors={[themeColor]}
-                        />
-                    }
-                    onEndReachedThreshold={0.4}
-                    onEndReached={() => {
-                        if (hasNextPage && !isFetchingNextPage) fetchNextPage();
+                  <Text
+                    className="text-[13px] font-bold"
+                    style={{
+                      color:
+                        preset === key ? themeColor : 'rgba(255,255,255,0.85)',
                     }}
-                    ListEmptyComponent={
-                        <View className="items-center justify-center py-20">
-                            <BarChart2 color="#CBD5E1" size={48} />
-                            <Text className="text-slate-400 text-center text-sm mt-4">
-                                No entries for this period.
-                            </Text>
-                        </View>
-                    }
-                />
-            ) : (
-                <View className="flex-1 px-4 pt-4">
-                    <View className="rounded-3xl overflow-hidden mb-4 border border-slate-200">
-                        <Calendar
-                            current={selectedDate || undefined}
-                            markedDates={markedDates}
-                            onDayPress={(day: any) => setSelectedDate(day.dateString)}
-                            theme={{
-                                calendarBackground: '#ffffff',
-                                textSectionTitleColor: '#64748b',
-                                selectedDayBackgroundColor: themeColor,
-                                selectedDayTextColor: '#ffffff',
-                                todayTextColor: themeColor,
-                                dayTextColor: '#0f172a',
-                                textDisabledColor: '#cbd5e1',
-                                arrowColor: themeColor,
-                                monthTextColor: '#0f172a',
-                                textMonthFontWeight: 'bold',
-                            }}
-                        />
-                    </View>
+                  >
+                    {label}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
+        </LinearGradient>
+      </Animated.View>
 
-                    <Text className="text-slate-800 font-bold mb-3 px-2">
-                        {selectedDate ? `Logs for ${selectedDate}` : 'Select a date to view logs'}
-                    </Text>
-
-                    <FlatList
-                        data={logsForSelectedDate}
-                        keyExtractor={(item) => String(item.id)}
-                        contentContainerStyle={{ paddingBottom: 80 }}
-                        renderItem={({ item }) => (
-                            <LogCard log={item} themeColor={themeColor} />
-                        )}
-                        ListEmptyComponent={
-                            selectedDate ? (
-                                <View className="py-8 items-center justify-center bg-white rounded-3xl border border-slate-200">
-                                    <Clock color="#CBD5E1" size={32} />
-                                    <Text className="text-slate-400 text-sm mt-2">
-                                        No logs on this date.
-                                    </Text>
-                                </View>
-                            ) : <View />
-                        }
-                    />
-                </View>
-            )}
-
-            <ConfirmModal
-                visible={infoModal.visible}
-                title={infoModal.title}
-                message={infoModal.message}
-                confirmLabel="OK"
-                cancelLabel="Dismiss"
-                themeColor={themeColor}
-                onCancel={() => setInfoModal({ ...infoModal, visible: false })}
-                onConfirm={() => setInfoModal({ ...infoModal, visible: false })}
-            />
+      {isLoading ? (
+        <View className="flex-1 items-center justify-center">
+          <ActivityIndicator size="large" color={themeColor} />
         </View>
-    );
+      ) : isError ? (
+        <View className="flex-1 items-center justify-center px-8">
+          <AlertCircle color="#94A3B8" size={48} />
+          <Text className="text-slate-500 text-center text-base mt-4">
+            Unable to load report data.
+          </Text>
+          <Pressable
+            onPress={() => refetch()}
+            className="mt-4 px-6 py-3 rounded-full"
+            style={{ backgroundColor: themeColor }}
+          >
+            <Text className="text-white font-semibold">Retry</Text>
+          </Pressable>
+        </View>
+      ) : !isCalendar ? (
+        // ---- LIST VIEW (same as Time Log History) ----
+        <FlatList
+          data={logs}
+          keyExtractor={item => String(item.id)}
+          contentContainerStyle={{ padding: 20, paddingBottom: 106 }}
+          renderItem={({ item, index }) => (
+            <Animated.View
+              entering={FadeInUp.duration(350).delay(Math.min(index, 6) * 40)}
+            >
+              <Pressable
+                onPress={() =>
+                  navigation.navigate('TimeLogDetails', { timeLogId: item.id })
+                }
+              >
+                <LogCard log={item} themeColor={themeColor} />
+              </Pressable>
+            </Animated.View>
+          )}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefetching}
+              onRefresh={() => {
+                refetch();
+              }}
+              tintColor={themeColor}
+              colors={[themeColor]}
+            />
+          }
+          onEndReachedThreshold={0.4}
+          onEndReached={() => {
+            if (hasNextPage && !isFetchingNextPage) fetchNextPage();
+          }}
+          ListFooterComponent={
+            isFetchingNextPage ? (
+              <View className="py-6">
+                <ActivityIndicator color={themeColor} />
+              </View>
+            ) : undefined
+          }
+          ListEmptyComponent={
+            <View className="items-center justify-center py-20">
+              <BarChart2 color="#CBD5E1" size={48} />
+              <Text className="text-slate-400 text-center text-sm mt-4">
+                No entries for this period.
+              </Text>
+            </View>
+          }
+        />
+      ) : (
+        // ---- CALENDAR VIEW ----
+        <ScrollView
+          contentContainerStyle={{ padding: 16, paddingBottom: 106 }}
+          showsVerticalScrollIndicator={false}
+        >
+          <View className="rounded-3xl overflow-hidden border border-slate-200">
+            <Calendar
+              current={selectedDate || undefined}
+              markedDates={markedDates}
+              onDayPress={(day: any) => {
+                setSelectedDate(day.dateString);
+                setDateModalOpen(true);
+              }}
+              theme={{
+                calendarBackground: '#ffffff',
+                textSectionTitleColor: '#64748b',
+                selectedDayBackgroundColor: themeColor,
+                selectedDayTextColor: '#ffffff',
+                todayTextColor: themeColor,
+                dayTextColor: '#0f172a',
+                textDisabledColor: '#cbd5e1',
+                arrowColor: themeColor,
+                monthTextColor: '#0f172a',
+                textMonthFontWeight: 'bold',
+              }}
+            />
+          </View>
+
+          {(hasNextPage || isFetchingNextPage) && (
+            <View className="flex-row items-center justify-center mt-4">
+              <ActivityIndicator size="small" color={themeColor} />
+              <Text className="ml-2 text-[12px] text-slate-400">
+                Loading all your logs...
+              </Text>
+            </View>
+          )}
+
+          <View className="flex-row items-center justify-center mt-4">
+            <View
+              className="rounded-full mr-2"
+              style={{ width: 8, height: 8, backgroundColor: themeColor }}
+            />
+            <Text className="text-[12px] text-slate-400">
+              Dates with a dot have time logs
+            </Text>
+          </View>
+        </ScrollView>
+      )}
+
+      {/* Day details modal */}
+      <Modal
+        visible={dateModalOpen}
+        animationType="slide"
+        transparent
+        statusBarTranslucent
+        onRequestClose={closeDateModal}
+      >
+        <View className="flex-1 justify-end">
+          <Pressable
+            className="absolute inset-0 bg-black/50"
+            onPress={closeDateModal}
+          />
+          <View
+            className="bg-white rounded-t-3xl p-6"
+            style={{ maxHeight: '80%', minHeight: '40%' }}
+          >
+            <View className="flex-row justify-between items-center mb-1">
+              <View className="flex-1 pr-3">
+                <Text className="text-lg font-bold text-slate-900">
+                  {formatDayLabel(selectedDate)}
+                </Text>
+                <Text className="text-xs text-slate-500 mt-0.5">
+                  {logsForSelectedDate.length > 0
+                    ? `${logsForSelectedDate.length} ${
+                        logsForSelectedDate.length === 1 ? 'entry' : 'entries'
+                      } · ${selectedDayHours.toFixed(2)} hrs`
+                    : 'Time logs for this date'}
+                </Text>
+              </View>
+              <Pressable onPress={closeDateModal} className="p-1">
+                <X size={20} color="#64748B" />
+              </Pressable>
+            </View>
+
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ paddingTop: 16, paddingBottom: 8 }}
+            >
+              {logsForSelectedDate.length === 0 ? (
+                <View className="items-center justify-center py-10">
+                  <Clock color="#CBD5E1" size={40} />
+                  <Text className="text-slate-400 text-sm mt-3">
+                    No time logs on this date.
+                  </Text>
+                </View>
+              ) : (
+                logsForSelectedDate.map(log => (
+                  <Pressable
+                    key={log.id}
+                    onPress={() => {
+                      closeDateModal();
+                      navigation.navigate('TimeLogDetails', {
+                        timeLogId: log.id,
+                      });
+                    }}
+                  >
+                    <LogCard log={log} themeColor={themeColor} />
+                  </Pressable>
+                ))
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      <ConfirmModal
+        visible={infoModal.visible}
+        title={infoModal.title}
+        message={infoModal.message}
+        confirmLabel="OK"
+        cancelLabel="Dismiss"
+        themeColor={themeColor}
+        onCancel={() => setInfoModal({ ...infoModal, visible: false })}
+        onConfirm={() => setInfoModal({ ...infoModal, visible: false })}
+      />
+    </View>
+  );
 }

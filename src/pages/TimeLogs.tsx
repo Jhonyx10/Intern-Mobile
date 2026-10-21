@@ -8,7 +8,6 @@ import {
 } from 'react-native';
 import Animated, { FadeInUp, FadeInDown } from 'react-native-reanimated';
 import {
-  ScanFace,
   CheckCircle2,
   Clock,
   MapPin,
@@ -31,10 +30,6 @@ import {
 } from '../util/queries/timelog';
 import { useDashboard } from '../util/queries/dashboard';
 import { useUser } from '../util/queries/auth';
-import {
-  usePendingExcursions,
-  useUpdateExcursionReason,
-} from '../util/queries/excursions';
 import GeofenceMap from '../components/GeofenceMap';
 import { saveToQueue, syncOfflineQueue } from '../util/offlineQueue';
 import NetInfo from '@react-native-community/netinfo';
@@ -53,8 +48,8 @@ import StatusBadge from '../components/timelogs/StatusBadge';
 import InfoRow from '../components/timelogs/InfoRow';
 import FaceEnrollModal from '../components/modal/FaceEnrollModal';
 import TaskNoteModal from '../components/modal/TaskNoteModal';
-import ExcursionReasonModal from '../components/modal/ExcursionReasonModal';
 import PunchActionCard from '../components/timelogs/PunchActionCard';
+import { useExcursion } from '../util/ExcursionContext';
 
 import { useGeofenceControls } from '../util/hooks/useGeoFenceMonitor';
 import { useOfflineSync } from '../components/OfflineSyncProvider';
@@ -75,16 +70,13 @@ export default function TimeLogs() {
     'punch_in' | 'punch_out' | 'break_out' | 'break_in' | null
   >(null);
   const [taskNoteModalVisible, setTaskNoteModalVisible] = useState(false);
-  const { data: pendingExcursions } = usePendingExcursions();
-  const { mutateAsync: updateExcursionReason, isPending: isUpdatingReason } =
-    useUpdateExcursionReason();
-  const [reasonModalVisible, setReasonModalVisible] = useState(false);
-  const [selectedExcursionId, setSelectedExcursionId] = useState<number | null>(
-    null,
-  );
   const [confirmBreakAction, setConfirmBreakAction] = useState<
     'break_out' | 'break_in' | null
   >(null);
+
+  // Global excursion context — the modal itself is rendered at the app root.
+  const { pendingCount: pendingExcursionCount, openFirstPending } =
+    useExcursion();
 
   const isClockedIn = Boolean(
     serverStatus?.open_log && !serverStatus.open_log.time_out,
@@ -179,12 +171,17 @@ export default function TimeLogs() {
     }
 
     try {
+      // useTimePunch's onSuccess invalidates time_status and task_checker,
+      // so the task note button re-enables itself after Break In.
       const res = await timePunch(record);
       setCameraMode(null);
       setTaskNoteModalVisible(false);
       showToast(res?.message ?? 'Action completed successfully!', 'success');
       syncOfflineQueue(timePunch, (record, msg) => {
-        showToast(`Offline punch (${record.action}) couldn't be synced: ${msg}`, 'error');
+        showToast(
+          `Offline punch (${record.action}) couldn't be synced: ${msg}`,
+          'error',
+        );
       });
     } catch (e: any) {
       setCameraMode(null);
@@ -338,8 +335,8 @@ export default function TimeLogs() {
       hint: isSyncing
         ? 'Syncing...'
         : !isInGeofence
-          ? 'Fieldwork mode (Break allowed)'
-          : 'Tap to break out',
+        ? 'Fieldwork mode (Break allowed)'
+        : 'Tap to break out',
       onPress: () => handleActionPress('break_out'),
       color: '#F59E0B',
     },
@@ -350,8 +347,8 @@ export default function TimeLogs() {
       hint: isSyncing
         ? 'Syncing...'
         : !isInGeofence
-          ? 'Fieldwork mode (Resume allowed)'
-          : 'Tap to resume work',
+        ? 'Fieldwork mode (Resume allowed)'
+        : 'Tap to resume work',
       onPress: () => handleActionPress('break_in'),
       color: '#10B981',
     },
@@ -362,8 +359,8 @@ export default function TimeLogs() {
       hint: isSyncing
         ? 'Syncing...'
         : !isInGeofence
-          ? 'Fieldwork mode (Note required)'
-          : 'Tap to punch out',
+        ? 'Fieldwork mode (Note required)'
+        : 'Tap to punch out',
       onPress: () => handleActionPress('punch_out'),
       color: '#EF4444',
     },
@@ -372,7 +369,7 @@ export default function TimeLogs() {
       icon: CheckCircle2,
       disabled: true,
       hint: 'You have completed your hours for today',
-      onPress: () => { },
+      onPress: () => {},
       color: '#6B7280',
     },
   };
@@ -381,8 +378,23 @@ export default function TimeLogs() {
   const timelineEntry = status.open_log || status.today_segments?.[0];
 
   // Task note/photo reminder: only meaningful while there's an open log to attach to.
+  // The server decides per session (morning before Break In, afternoon after it).
   const taskNeedsUpdate =
     Boolean(status?.open_log?.id) && Boolean(taskChecker?.needs_update);
+
+  // Session-aware labels
+  const taskSessionLabel =
+    taskChecker?.session === 'afternoon' ? 'Afternoon' : 'Morning';
+
+  const loggedLabel = (() => {
+    if (taskChecker?.morning_done && taskChecker?.afternoon_done) {
+      return 'Morning & afternoon task notes logged';
+    }
+    if (taskChecker?.afternoon_done)
+      return 'Afternoon task note & photos logged';
+    if (taskChecker?.morning_done) return 'Morning task note & photos logged';
+    return 'Task note & photos logged';
+  })();
 
   return (
     <>
@@ -412,7 +424,7 @@ export default function TimeLogs() {
         </Animated.View>
 
         <View className="px-5" style={{ marginTop: -28 }}>
-          {pendingExcursions && pendingExcursions.length > 0 && (
+          {pendingExcursionCount > 0 && (
             <Animated.View
               entering={FadeInUp.duration(400)}
               className="flex-row items-center rounded-2xl bg-amber-50 px-4 py-3 mb-4 border border-amber-100"
@@ -420,14 +432,9 @@ export default function TimeLogs() {
               <AlertCircle color="#D97706" size={18} />
               <View className="ml-2.5 flex-1">
                 <Text className="text-[12px] font-medium text-amber-700">
-                  You have {pendingExcursions.length} pending excursion(s).
+                  You have {pendingExcursionCount} pending excursion(s).
                 </Text>
-                <Pressable
-                  onPress={() => {
-                    setSelectedExcursionId(pendingExcursions[0].id);
-                    setReasonModalVisible(true);
-                  }}
-                >
+                <Pressable onPress={() => openFirstPending()}>
                   <Text className="text-[12px] font-bold text-amber-700 mt-1 underline">
                     Provide reason
                   </Text>
@@ -463,7 +470,10 @@ export default function TimeLogs() {
               }}
             >
               <View className="flex-row items-center">
-                <View className="rounded-2xl p-3 mr-3" style={{ backgroundColor: '#FEE2E2' }}>
+                <View
+                  className="rounded-2xl p-3 mr-3"
+                  style={{ backgroundColor: '#FEE2E2' }}
+                >
                   <AlertCircle color="#DC2626" size={24} />
                 </View>
                 <View className="flex-1">
@@ -471,7 +481,8 @@ export default function TimeLogs() {
                     Time tracking unavailable
                   </Text>
                   <Text className="text-[12px] text-slate-500 mt-0.5 leading-5">
-                    You've been removed from your company placement, so punching in or out is disabled.
+                    You've been removed from your company placement, so punching
+                    in or out is disabled.
                   </Text>
                 </View>
               </View>
@@ -491,7 +502,7 @@ export default function TimeLogs() {
               <View className="ml-2.5 flex-1">
                 <Text className="text-[12px] font-medium text-amber-700">
                   {taskChecker?.message ??
-                    "Don't forget to log your task note and photo(s) for today."}
+                    `Don't forget to log your ${taskSessionLabel.toLowerCase()} task note and photo(s).`}
                 </Text>
                 <Pressable
                   onPress={() =>
@@ -608,7 +619,7 @@ export default function TimeLogs() {
                     className="ml-2 font-bold text-[13px]"
                     style={{ color: themeColor }}
                   >
-                    Update Task Note & Photos
+                    Update {taskSessionLabel} Task Note & Photos
                   </Text>
                 </Pressable>
               )}
@@ -619,7 +630,7 @@ export default function TimeLogs() {
                   <View className="mt-4 flex-row items-center justify-center rounded-2xl py-3 bg-green-50">
                     <CheckCircle2 color="#16A34A" size={16} />
                     <Text className="ml-2 font-semibold text-[13px] text-green-700">
-                      Task note & photos logged
+                      {loggedLabel}
                     </Text>
                   </View>
                 )}
@@ -644,14 +655,16 @@ export default function TimeLogs() {
                 Geofence
               </Text>
               <View
-                className={`rounded-full px-3 py-1 ${status?.geofence?.configured ? 'bg-green-50' : 'bg-red-50'
-                  }`}
+                className={`rounded-full px-3 py-1 ${
+                  status?.geofence?.configured ? 'bg-green-50' : 'bg-red-50'
+                }`}
               >
                 <Text
-                  className={`text-[11px] font-bold uppercase tracking-wide ${status?.geofence?.configured
-                    ? 'text-green-700'
-                    : 'text-red-600'
-                    }`}
+                  className={`text-[11px] font-bold uppercase tracking-wide ${
+                    status?.geofence?.configured
+                      ? 'text-green-700'
+                      : 'text-red-600'
+                  }`}
                 >
                   {status?.geofence?.configured ? 'Configured' : 'Not Set'}
                 </Text>
@@ -700,27 +713,6 @@ export default function TimeLogs() {
         themeColor={themeColor}
       />
 
-      <ExcursionReasonModal
-        visible={reasonModalVisible}
-        onClose={() => {
-          setReasonModalVisible(false);
-          setSelectedExcursionId(null);
-        }}
-        onSubmit={async reason => {
-          if (selectedExcursionId) {
-            try {
-              await updateExcursionReason({ id: selectedExcursionId, reason });
-              setReasonModalVisible(false);
-              setSelectedExcursionId(null);
-            } catch (e) {
-              showToast('Failed to submit reason.', 'error');
-            }
-          }
-        }}
-        isSubmitting={isUpdatingReason}
-        themeColor={themeColor}
-      />
-
       <FaceEnrollModal
         visible={cameraMode !== null}
         onClose={() => setCameraMode(null)}
@@ -733,9 +725,7 @@ export default function TimeLogs() {
             : 'Punch Out — Face Verification'
         }
         captureLabel={
-          cameraMode === 'punch_in'
-            ? 'Confirm Punch In'
-            : 'Confirm Punch Out'
+          cameraMode === 'punch_in' ? 'Confirm Punch In' : 'Confirm Punch Out'
         }
       />
 

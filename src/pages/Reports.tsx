@@ -8,8 +8,6 @@ import {
   ActivityIndicator,
   Pressable,
   RefreshControl,
-  Share,
-  Platform,
 } from 'react-native';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import LinearGradient from 'react-native-linear-gradient';
@@ -32,10 +30,10 @@ import {
   X,
 } from 'lucide-react-native';
 import { Calendar } from 'react-native-calendars';
-import ReactNativeBlobUtil from 'react-native-blob-util';
 import { addWeeks, isSameWeek } from 'date-fns';
 
 import ConfirmModal from '../components/modal/ConfirmModal';
+import ExportDtrModal from '../components/modal/ExportDtrModal';
 
 import { RootStackParamList } from '../components/Navigation';
 import {
@@ -44,13 +42,20 @@ import {
   TimeLogPreset,
 } from '../util/queries/timelog';
 import { useUser } from '../util/queries/auth';
+import { useDashboard } from '../util/queries/dashboard';
 import { withAlpha, formatLogTime } from '../util/timeLogHelpers';
+
+// Weekly report PDF (the original file, restored)
 import {
   exportTimeLogReportPdf,
   formatWeekLabel,
   getWeekStart,
   filterLogsToWeek,
 } from '../util/timeLogReportPdf';
+
+// DTR export (PDF + CSV) used by the export modal
+import { exportDtrPdf, exportDtrCsv, DtrStudent } from '../util/ExportDtr';
+import { DateRange } from '../util/dtrRange';
 
 function formatLogDate(iso: string | null) {
   if (!iso) return 'Unknown date';
@@ -256,6 +261,7 @@ export default function Reports() {
   const navigation =
     useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { data: userData } = useUser();
+  const { data: dashboard } = useDashboard();
   const themeColor = userData?.settings?.theme_color || '#1D4ED8';
   const [preset, setPreset] = useState<TimeLogPreset>('daily');
   const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list');
@@ -272,6 +278,10 @@ export default function Reports() {
   const [exportingPdf, setExportingPdf] = useState(false);
   const isCurrentWeek = isSameWeek(weekStart, new Date(), { weekStartsOn: 1 });
 
+  // DTR export modal state
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [isExportingDtr, setIsExportingDtr] = useState(false);
+
   const isCalendar = viewMode === 'calendar';
 
   // List view honours the Daily/Weekly/... filter. Calendar view needs every
@@ -287,6 +297,10 @@ export default function Reports() {
     isFetchingNextPage,
   } = useTimeLogsHistory(isCalendar ? undefined : preset);
 
+  // Unfiltered query used by both exports, so any week or date range is
+  // complete no matter which list filter is selected.
+  const exportQuery = useTimeLogsHistory(undefined);
+
   // In calendar mode, keep loading pages until every log is in
   useEffect(() => {
     if (isCalendar && hasNextPage && !isFetchingNextPage) {
@@ -298,73 +312,31 @@ export default function Reports() {
   const totalCount = data?.pages[0]?.total_count ?? 0;
   const totalHours = logs.reduce((acc, l) => acc + (l.duration_hours ?? 0), 0);
 
-  const handleExportCSV = async () => {
-    if (!logs.length) {
-      setInfoModal({
-        visible: true,
-        title: 'Empty',
-        message: 'No time logs available to export for this period.',
-      });
-      return;
+  // Loads every page of the unfiltered history
+  const loadAllLogs = async () => {
+    let pages = exportQuery.data?.pages ?? [];
+    let more = !!exportQuery.hasNextPage;
+    while (more) {
+      const res = await exportQuery.fetchNextPage();
+      pages = res.data?.pages ?? pages;
+      more = !!res.hasNextPage;
     }
-
-    const headers = ['Date', 'Session', 'Time In', 'Time Out', 'Hours'];
-    const csvRows = logs.map(log => {
-      return [
-        formatISODate(log.time_in),
-        log.session_period || 'Regular',
-        formatLogTime(log.time_in).replace(/,/g, ''),
-        formatLogTime(log.time_out).replace(/,/g, ''),
-        log.duration_hours || '0',
-      ].join(',');
-    });
-
-    const csvContent = [headers.join(','), ...csvRows].join('\n');
-    const fileName = `DTR_Export_${isCalendar ? 'all' : preset}.csv`;
-    const path = `${ReactNativeBlobUtil.fs.dirs.CacheDir}/${fileName}`;
-
-    try {
-      await ReactNativeBlobUtil.fs.writeFile(path, csvContent, 'utf8');
-      if (Platform.OS === 'ios') {
-        await ReactNativeBlobUtil.ios.presentOptionsMenu(path);
-      } else {
-        await Share.share({
-          url: `file://${path}`,
-          title: fileName,
-        });
-      }
-    } catch (e: any) {
-      console.error('Export Error:', e);
-      setInfoModal({
-        visible: true,
-        title: 'Export Failed',
-        message: 'There was an error generating the export file.',
-      });
-    }
+    return pages.flatMap(p => p.logs);
   };
 
-  const handleExportPDF = async () => {
+  // Button 2: weekly report PDF
+  const handleExportWeeklyPDF = async () => {
     try {
       setExportingPdf(true);
 
-      // Load every page so the whole week is included
-      let pages = data?.pages ?? [];
-      let more = !!hasNextPage;
-      while (more) {
-        const res = await fetchNextPage();
-        pages = res.data?.pages ?? pages;
-        more = !!res.hasNextPage;
-      }
-      const allLogs = pages.flatMap(p => p.logs);
+      const allLogs = await loadAllLogs();
       const weekLogs = filterLogsToWeek(allLogs, weekStart);
 
       if (!weekLogs.length) {
         setInfoModal({
           visible: true,
           title: 'Empty',
-          message: isCurrentWeek
-            ? 'No time logs found for this week.'
-            : 'No time logs found for this week. For past weeks, switch the filter to Monthly or Yearly so older logs are loaded.',
+          message: 'No time logs found for this week.',
         });
         return;
       }
@@ -386,6 +358,42 @@ export default function Reports() {
       });
     } finally {
       setExportingPdf(false);
+    }
+  };
+
+  // Button 3: DTR export (PDF or CSV) for a chosen date range
+  const handleExportDtr = async (
+    type: 'pdf' | 'csv',
+    range: DateRange | null,
+  ) => {
+    try {
+      setIsExportingDtr(true);
+
+      const allLogs = await loadAllLogs();
+
+      const schedule = dashboard?.progress?.schedule;
+      const student: DtrStudent = {
+        name: userData?.user?.name ?? 'Student', // adjust to your user field
+        company: dashboard?.company?.name ?? '',
+        scheduleIn: schedule?.time_in,
+        scheduleOut: schedule?.time_out,
+        hoursPerDay: schedule?.hours_per_day,
+      };
+
+      if (type === 'pdf') await exportDtrPdf(allLogs, student, range);
+      else await exportDtrCsv(allLogs, student, range);
+
+      setExportModalOpen(false);
+    } catch (e: any) {
+      console.error('DTR Export Error:', e);
+      setExportModalOpen(false);
+      setInfoModal({
+        visible: true,
+        title: 'Export Failed',
+        message: e?.message ?? 'There was an error generating the file.',
+      });
+    } finally {
+      setIsExportingDtr(false);
     }
   };
 
@@ -445,6 +453,7 @@ export default function Reports() {
               </Text>
             </View>
             <View className="flex-row items-center gap-3">
+              {/* 1. Toggle list / calendar */}
               <Pressable
                 onPress={() =>
                   setViewMode(prev => (prev === 'list' ? 'calendar' : 'list'))
@@ -457,8 +466,10 @@ export default function Reports() {
                   <ListIcon color="#fff" size={18} strokeWidth={2} />
                 )}
               </Pressable>
+
+              {/* 2. Export weekly report PDF */}
               <Pressable
-                onPress={handleExportPDF}
+                onPress={handleExportWeeklyPDF}
                 disabled={exportingPdf}
                 className="w-10 h-10 rounded-full bg-white/20 items-center justify-center"
               >
@@ -468,8 +479,10 @@ export default function Reports() {
                   <FileText color="#fff" size={18} strokeWidth={2} />
                 )}
               </Pressable>
+
+              {/* 3. Export DTR (opens the modal) */}
               <Pressable
-                onPress={handleExportCSV}
+                onPress={() => setExportModalOpen(true)}
                 className="w-10 h-10 rounded-full bg-white/20 items-center justify-center"
               >
                 <Download color="#fff" size={18} strokeWidth={2} />
@@ -487,7 +500,7 @@ export default function Reports() {
               : `Viewing ${preset} DTR summary`}
           </Text>
 
-          {/* Week selector for the PDF report */}
+          {/* Week selector for the weekly PDF report */}
           <View
             className="flex-row items-center justify-between rounded-2xl px-2 py-1.5 mb-3"
             style={{ backgroundColor: 'rgba(255,255,255,0.15)' }}
@@ -729,6 +742,14 @@ export default function Reports() {
           </View>
         </View>
       </Modal>
+
+      <ExportDtrModal
+        visible={exportModalOpen}
+        onClose={() => setExportModalOpen(false)}
+        onExport={handleExportDtr}
+        isExporting={isExportingDtr}
+        themeColor={themeColor}
+      />
 
       <ConfirmModal
         visible={infoModal.visible}

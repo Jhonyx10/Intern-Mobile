@@ -1,3 +1,4 @@
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 
 export const getPendingExcursions = async () => {
@@ -30,12 +31,13 @@ export const updateExcursionReason = async (excursionId: number | string, reason
     return data;
 };
 
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-
 export const usePendingExcursions = () => {
     return useQuery({
         queryKey: ['pendingExcursions'],
-        queryFn: getPendingExcursions
+        queryFn: getPendingExcursions,
+        // Excursions complete in the background (outside React), so poll
+        // to pick them up while the screen is already open.
+        refetchInterval: 15000,
     });
 };
 

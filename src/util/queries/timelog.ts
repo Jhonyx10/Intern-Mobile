@@ -193,6 +193,9 @@ export const useTimePunch = () => {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['time_status'] });
             queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+            // Break In flips the task session from morning to afternoon,
+            // so the checker must be refetched after every punch.
+            queryClient.invalidateQueries({ queryKey: ['task_checker'] });
         },
     });
 };
@@ -229,15 +232,25 @@ export const useTaskUpdate = () => {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['time_status'] });
             queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+            // Re-disable the button right after a session's note is submitted.
+            queryClient.invalidateQueries({ queryKey: ['task_checker'] });
+            queryClient.invalidateQueries({ queryKey: ['time_log_detail'] });
+            queryClient.invalidateQueries({ queryKey: ['time_logs_history'] });
         },
     });
 };
 
+export type TaskSession = 'morning' | 'afternoon';
+
 export interface TaskCheckerResult {
     time_log_id: number;
+    is_today: boolean;
     has_note: boolean;
     has_photos: boolean;
     needs_update: boolean;
+    session: TaskSession | null;
+    morning_done: boolean;
+    afternoon_done: boolean;
     message: string;
 }
 

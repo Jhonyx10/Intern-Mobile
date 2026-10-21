@@ -21,6 +21,7 @@ import { useGpsStatus } from './src/util/hooks/useGpsStatus';
 import "./global.css";
 import { OfflineSyncProvider } from './src/components/OfflineSyncProvider';
 import { queryClient } from './src/util/queryClient';
+import { ExcursionProvider } from './src/util/ExcursionContext';
 
 function App() {
   const isDarkMode = useColorScheme() === 'dark';
@@ -30,8 +31,10 @@ function App() {
       <QueryClientProvider client={queryClient}>
         <OfflineSyncProvider>
           <ToastProvider>
-            <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
-            <AppContent />
+            <ExcursionProvider>
+              <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
+              <AppContent />
+            </ExcursionProvider>
           </ToastProvider>
         </OfflineSyncProvider>
       </QueryClientProvider>

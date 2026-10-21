@@ -5,7 +5,7 @@ import autoTable from 'jspdf-autotable';
 import { format } from 'date-fns';
 import { DateRange, filterLogsByRange, fileSuffix } from './dtrRange';
 
-/* ── PDF layout: Civil Service Form 48 style ──────────────────── */
+/* ── PDF layout: Civil Service Form 48 style (same as web) ───── */
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
@@ -17,6 +17,20 @@ const COPY_WIDTH = 96;
 const TABLE_START_Y = 58;
 
 type Cell = string | number;
+
+/**
+ * Exact time, not rounded to decimal hours.
+ * 283 -> "4 hrs 43 mins", 300 -> "5 hrs", 45 -> "45 mins", 0 -> "0 mins"
+ */
+function formatDuration(totalMinutes: number): string {
+  const m = Math.max(0, Math.round(totalMinutes));
+  const h = Math.floor(m / 60);
+  const mins = m % 60;
+  const parts: string[] = [];
+  if (h) parts.push(`${h} ${h === 1 ? 'hr' : 'hrs'}`);
+  if (mins || !h) parts.push(`${mins} ${mins === 1 ? 'min' : 'mins'}`);
+  return parts.join(' ');
+}
 
 // 12-hour clock without AM/PM, because the column already says which it is
 function clock(d: Date): string {
@@ -117,6 +131,8 @@ function buildRows(logs: any[], requiredMinutes: number) {
       pmOut,
       under ? Math.floor(under / 60) : '',
       under ? under % 60 : '',
+      // Exact time worked that day (blank when nothing was completed)
+      worked ? formatDuration(worked) : '',
     ]);
   }
 
@@ -194,7 +210,7 @@ function drawCopy(
     doc.setFont('helvetica', 'normal');
   }
 
-  // Table
+  // Table (column widths add up to COPY_WIDTH = 96 mm)
   autoTable(doc, {
     startY: TABLE_START_Y,
     margin: { left: x, right: PAGE_MARGIN },
@@ -206,8 +222,9 @@ function drawCopy(
         { content: 'A.M.', colSpan: 2 },
         { content: 'P.M.', colSpan: 2 },
         { content: 'Undertime', colSpan: 2 },
+        { content: 'Total Time', rowSpan: 2 },
       ],
-      ['Arrival', 'Depart.', 'Arrival', 'Depart.', 'Hours', 'Min.'],
+      ['Time In', 'Time Out', 'Time In', 'Time Out', 'Hours', 'Min.'],
     ],
     body: ctx.rows.map(r => r.map(c => String(c))),
     foot: [
@@ -215,6 +232,7 @@ function drawCopy(
         { content: 'Total', colSpan: 5, styles: { halign: 'left' } },
         String(Math.floor(ctx.underTotal / 60)),
         String(ctx.underTotal % 60),
+        formatDuration(ctx.workedTotal),
       ],
     ],
     showFoot: 'lastPage',
@@ -229,19 +247,28 @@ function drawCopy(
       lineWidth: 0.2,
       minCellHeight: 5,
     },
-    headStyles: { fillColor: 255, textColor: 0, fontStyle: 'bold' },
+    headStyles: { fillColor: 255, textColor: 0, fontStyle: 'bold', fontSize: 6.5 },
     footStyles: { fillColor: 255, textColor: 0, fontStyle: 'bold' },
     bodyStyles: { fillColor: 255 },
     alternateRowStyles: { fillColor: 255 },
-    columnStyles: { 0: { cellWidth: 8, fontStyle: 'bold' } },
+    columnStyles: {
+      0: { cellWidth: 9, fontStyle: 'bold' },
+      1: { cellWidth: 12.5 },
+      2: { cellWidth: 12.5 },
+      3: { cellWidth: 12.5 },
+      4: { cellWidth: 12.5 },
+      5: { cellWidth: 9 },
+      6: { cellWidth: 9 },
+      7: { cellWidth: 19, fontSize: 6.5 },
+    },
   });
 
   let y: number = ((doc as any).lastAutoTable?.finalY ?? 215) + 5;
 
-  // Total hours rendered this month
+  // Total time rendered this month, in exact hours and minutes
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(7.5);
-  doc.text(`Total hours rendered: ${(ctx.workedTotal / 60).toFixed(1)} hrs`, x, y);
+  doc.text(`Total time rendered: ${formatDuration(ctx.workedTotal)}`, x, y);
 
   // Certification
   y += 6;
@@ -252,16 +279,16 @@ function drawCopy(
     w - 4,
   );
   doc.text(cert, x + 2, y);
-  y += cert.length * 3 + 12;
+  y += cert.length * 3 + 7;
 
   // Student signature
   doc.line(x + 20, y, x + w - 4, y);
   doc.text('(Signature)', x + 20 + (w - 24) / 2, y + 3.5, { align: 'center' });
 
-  // Verification
-  y += 10;
+  // Verification (spacing kept tight so the In-Charge line stays on the page)
+  y += 9;
   doc.text('Verified as to the prescribed office hours.', x + 2, y);
-  y += 12;
+  y += 8;
   doc.line(x + 20, y, x + w - 4, y);
   doc.text('In-Charge', x + 20 + (w - 24) / 2, y + 3.5, { align: 'center' });
 }

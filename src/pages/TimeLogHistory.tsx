@@ -29,7 +29,7 @@ import { useUser } from '../util/queries/auth';
 import { useDashboard } from '../util/queries/dashboard';
 import { useToast } from '../components/ToastProvider';
 import { withAlpha, formatLogTime } from '../util/timeLogHelpers';
-import ExportDtrModal from '../components/modal/ExportdtrModal';
+import ExportDtrModal from '../components/modal/ExportDtrModal';
 import { exportDtrPdf, exportDtrCsv } from '../util/ExportDtr';
 import { DateRange } from '../util/dtrRange';
 

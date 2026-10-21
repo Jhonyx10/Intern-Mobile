@@ -34,22 +34,40 @@ async function ensureChannel() {
         id: CHANNEL_ID,
         name: 'Geofence Alerts',
         importance: AndroidImportance.HIGH,
+        // Alarm-style vibration: wait 0 ms → buzz 500 ms → pause 250 ms → buzz 500 ms
+        vibration: true,
+        vibrationPattern: [0, 500, 250, 500],
+        // Red LED flash
+        lights: true,
+        lightColor: '#FF0000',
+        sound: 'default',
     });
 }
 
 async function fireOutsideTooLongNotification() {
     await ensureChannel();
     await notifee.displayNotification({
-        title: 'You\'re outside for too long',
+        title: "⚠️ You're outside for too long",
         body: 'You have been outside the building premises for more than 3 minutes during working hours.',
         android: {
             channelId: CHANNEL_ID,
             importance: AndroidImportance.HIGH,
             smallIcon: 'ic_launcher',
             pressAction: { id: 'default' },
+            // Vibrate even if the device is on silent
+            vibrationPattern: [0, 500, 250, 500],
+            lights: [
+                '#FF0000', // red
+                500,        // on ms
+                500,        // off ms
+            ] as any,
+            sound: 'default',
         },
         ios: {
             sound: 'default',
+            // Time-sensitive category lets the alert break through Focus modes
+            categoryId: 'geofence_alert',
+            interruptionLevel: 'timeSensitive',
         },
     });
 }
@@ -75,7 +93,7 @@ function clearOutsideTimer() {
 // ─── Location helpers ────────────────────────────────────────────────────────
 
 const reportLiveLocation = async (location: Location) => {
-     if (!isPunchedIn || isInsideGeofence) return; // safety net even if a stray event fires post-stop
+    if (!isPunchedIn || isInsideGeofence) return; // safety net even if a stray event fires post-stop
     try {
         await api.post('/intern/time/location', {
             latitude: location.coords.latitude,

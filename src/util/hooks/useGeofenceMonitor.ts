@@ -2,28 +2,43 @@
 import { useEffect, useRef } from 'react';
 import BackgroundGeolocation, {
     Location,
-    GeofenceEvent,
     AuthorizationStatus,
     DesiredAccuracy,
 } from 'react-native-background-geolocation';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import notifee, { AndroidImportance } from '@notifee/react-native';
 import { api } from '../api';
+import { isPointInPolygon } from '../timeLogHelpers';
+import { queryClient } from '../queryClient';
 import { startExcursion, addExcursionPoint, completeExcursion } from '../queries/excursions';
 
-const OFFICE_GEOFENCE_ID = 'office';
 const EXCURSION_ID_KEY = '@excursion_id';
 const HEARTBEAT_INTERVAL_SECONDS = 10;
 const OUTSIDE_TOO_LONG_MS = 3 * 60 * 1000; // 3 minutes
+// How long the intern must stay outside the polygon before we report the exit
+// and create the excursion. Filters out GPS jitter and quick step-outs.
+const EXIT_CONFIRM_DELAY_MS = 20 * 1000;
+// Ignore fixes less accurate than this when deciding inside/outside.
+const MAX_ACCURACY_METERS = 50;
 
-// Module-level state, mirroring the original file's approach — these hooks
-// are each meant to be instantiated once (root listener + per-screen
-// controls), so plain module variables are fine here and avoid needing
-// a context provider just to share two small flags.
+// Make the reason modal react immediately instead of waiting for the next poll.
+const refreshPendingExcursions = () => {
+    queryClient.invalidateQueries({ queryKey: ['pendingExcursions'] });
+};
+
+// Module-level state. These hooks are each meant to be instantiated once
+// (root listener + root controls), so plain module variables are fine.
 let activeExcursionId: string | number | null = null;
-let isInsideGeofence = true; // assume inside until an EXIT event says otherwise
-let isPunchedIn = false; // gates whether heartbeat pings should broadcast
+let isInsideGeofence = true; // assume inside until a location fix says otherwise
+let isPunchedIn = false; // gates whether anything is reported
 let outsideTimer: ReturnType<typeof setTimeout> | null = null;
+let exitConfirmTimer: ReturnType<typeof setTimeout> | null = null;
+let exitReported = false; // true once the exit was sent to the server (excursion created)
+let isOnBreak = false; // true between break_out and break_in: no excursions, no alerts
+// The company's geofence_polygon ring ([lng, lat] pairs). This is the ONLY thing
+// that decides inside/outside. No radius is used anywhere.
+let officePolygon: number[][] | null = null;
+let lastCoords: { latitude: number; longitude: number } | null = null;
 
 // ─── Notifee helpers ────────────────────────────────────────────────────────
 
@@ -77,7 +92,7 @@ async function fireOutsideTooLongNotification() {
 function startOutsideTimer() {
     clearOutsideTimer(); // guard against double-start
     outsideTimer = setTimeout(async () => {
-        if (!isInsideGeofence && isPunchedIn) {
+        if (!isInsideGeofence && isPunchedIn && !isOnBreak) {
             await fireOutsideTooLongNotification();
         }
     }, OUTSIDE_TOO_LONG_MS);
@@ -90,12 +105,193 @@ function clearOutsideTimer() {
     }
 }
 
+function clearExitConfirmTimer() {
+    if (exitConfirmTimer !== null) {
+        clearTimeout(exitConfirmTimer);
+        exitConfirmTimer = null;
+    }
+}
+
+/**
+ * Sends the exit to the server and creates the excursion. Only called after
+ * the intern has stayed outside the polygon for EXIT_CONFIRM_DELAY_MS.
+ *
+ *   POST /intern/time/geofence-event  -> records the exit (server also opens the excursion)
+ *   POST /intern/excursions           -> creates / returns the ongoing excursion
+ */
+async function reportConfirmedExit(exitedAtIso: string) {
+    exitReported = true;
+    console.log('[geofence] exit confirmed, creating excursion');
+
+    try {
+        await api.post('/intern/time/geofence-event', {
+            event_type: 'exit',
+            occurred_at: exitedAtIso,
+            ...(lastCoords ?? {}),
+        });
+    } catch (e) {
+        console.error('Failed to log geofence exit:', e);
+    }
+
+    try {
+        const excursion = await startExcursion();
+        if (excursion?.id) {
+            activeExcursionId = excursion.id;
+            await AsyncStorage.setItem(EXCURSION_ID_KEY, excursion.id.toString());
+        }
+    } catch (e) {
+        console.error('Failed to start excursion:', e);
+    }
+    // Fetch GET /intern/excursions/pending right away so the modal opens now.
+    refreshPendingExcursions();
+}
+
+function scheduleExitReport() {
+    clearExitConfirmTimer(); // guard against double-start
+    const exitedAtIso = new Date().toISOString(); // keep the real exit time
+
+    exitConfirmTimer = setTimeout(async () => {
+        exitConfirmTimer = null;
+        // Still outside and still punched in? Then it's a real excursion.
+        if (!isInsideGeofence && isPunchedIn && !isOnBreak) {
+            await reportConfirmedExit(exitedAtIso);
+        }
+    }, EXIT_CONFIRM_DELAY_MS);
+}
+
+/**
+ * The intern just left the polygon. Nothing is sent yet: we wait
+ * EXIT_CONFIRM_DELAY_MS first, so a brief blip never creates an excursion.
+ */
+function handleExit() {
+    console.log('[geofence] exit detected');
+    isInsideGeofence = false;
+
+    if (isPunchedIn && !isOnBreak) {
+        scheduleExitReport();
+        // 3-minute "outside too long" alert; only fires if still outside.
+        startOutsideTimer();
+    }
+}
+
+/**
+ * The intern is back inside the polygon.
+ */
+async function handleEnter() {
+    console.log('[geofence] enter detected');
+    isInsideGeofence = true;
+    clearOutsideTimer(); // intern returned in time — cancel the alert
+
+    // Back before the exit was confirmed: it was a brief blip.
+    // The exit was never sent, so don't send an entry either.
+    if (!exitReported) {
+        clearExitConfirmTimer();
+        return;
+    }
+    exitReported = false;
+
+    try {
+        await api.post('/intern/time/geofence-event', {
+            event_type: 'entry',
+            occurred_at: new Date().toISOString(),
+            ...(lastCoords ?? {}),
+        });
+    } catch (e) {
+        console.error('Failed to log geofence entry:', e);
+    }
+
+    // The server closes ongoing excursions on entry too; completing
+    // here is a harmless no-op if that already happened.
+    if (activeExcursionId !== null) {
+        try {
+            await completeExcursion(activeExcursionId);
+        } catch (e) {
+            console.error('Failed to complete excursion:', e);
+        } finally {
+            activeExcursionId = null;
+            await AsyncStorage.removeItem(EXCURSION_ID_KEY);
+            refreshPendingExcursions();
+        }
+    }
+}
+
+/**
+ * Give the hook the company's geofence_polygon ring (GeoJSON, [lng, lat] pairs),
+ * or null if there isn't one. Without a polygon, no excursions are tracked.
+ */
+export function setGeofencePolygon(polygon: number[][] | null | undefined) {
+    officePolygon = polygon && polygon.length >= 3 ? polygon : null;
+}
+
+/**
+ * Call this whenever the intern's break state changes (true between Time Out
+ * for lunch and Time In after it). Excursions only count during the morning
+ * and afternoon sessions, never during the break.
+ */
+export function setGeofenceOnBreak(onBreak: boolean) {
+    if (onBreak === isOnBreak) return;
+    isOnBreak = onBreak;
+
+    if (onBreak) {
+        // Break started: cancel anything pending and close an open excursion.
+        clearExitConfirmTimer();
+        clearOutsideTimer();
+
+        const openId = activeExcursionId;
+        activeExcursionId = null;
+        exitReported = false;
+        AsyncStorage.removeItem(EXCURSION_ID_KEY).catch(() => {});
+        if (openId !== null) {
+            completeExcursion(openId)
+                .catch((e) =>
+                    console.error('Failed to complete excursion at break start:', e),
+                )
+                .finally(refreshPendingExcursions);
+        }
+        return;
+    }
+
+    // Break ended while still outside: the afternoon session starts now,
+    // so treat it as a fresh exit and run the usual confirmation delay.
+    if (!isInsideGeofence && isPunchedIn) {
+        scheduleExitReport();
+        startOutsideTimer();
+    }
+}
+
 // ─── Location helpers ────────────────────────────────────────────────────────
 
+/**
+ * Decide inside/outside from the geofence_polygon on every location fix, so it
+ * works in the background and matches what the app and dashboard show.
+ */
+const checkPolygonTransition = (location: Location) => {
+    if (!officePolygon || !isPunchedIn) return;
+    const accuracy = location.coords.accuracy;
+    if (typeof accuracy === 'number' && accuracy > MAX_ACCURACY_METERS) return;
+
+    lastCoords = {
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+    };
+
+    const inside = isPointInPolygon(
+        [location.coords.longitude, location.coords.latitude],
+        officePolygon,
+    );
+    if (inside === isInsideGeofence) return;
+
+    if (inside) {
+        handleEnter();
+    } else {
+        handleExit();
+    }
+};
+
 const reportLiveLocation = async (location: Location) => {
-    if (!isPunchedIn || isInsideGeofence) return; // safety net even if a stray event fires post-stop
+    if (!isPunchedIn || isInsideGeofence) return; // only while outside
     try {
-        await api.post('/intern/time/location', {
+        await api.post('/intern/intern-location', {
             latitude: location.coords.latitude,
             longitude: location.coords.longitude,
             accuracy_meters: location.coords.accuracy,
@@ -120,76 +316,26 @@ const recordExcursionPointIfOutside = async (location: Location) => {
 
 /**
  * Call this ONCE, at the app root — configures the native engine and
- * registers every listener for the app's lifetime. Unlike the previous
- * @rn-org/react-native-geofencing setup, BackgroundGeolocation.ready()
- * only needs to run once ever (it persists its config natively), and
- * these listeners keep firing even while the app is backgrounded or
- * (on Android, with stopOnTerminate: false) after the app is killed.
+ * registers the location listeners for the app's lifetime. These keep firing
+ * while the app is backgrounded or (on Android, with stopOnTerminate: false)
+ * after the app is killed.
  */
 export function useGeoFenceListeners() {
     useEffect(() => {
-        const onGeofence = async (event: GeofenceEvent) => {
-            if (event.identifier !== OFFICE_GEOFENCE_ID) return;
-
-            if (event.action === 'EXIT') {
-                isInsideGeofence = false;
-                try {
-                    await api.post('/intern/time/geofence-event', {
-                        event_type: 'exit',
-                        occurred_at: new Date().toISOString(),
-                    });
-
-                    const excursion = await startExcursion();
-                    if (excursion && excursion.id) {
-                        activeExcursionId = excursion.id;
-                        await AsyncStorage.setItem(EXCURSION_ID_KEY, excursion.id.toString());
-                    }
-                } catch (e) {
-                    console.error('Failed to log geofence exit:', e);
-                }
-
-                // Start the 3-minute "outside too long" timer.
-                // Only fires the notification if still punched in and still outside.
-                if (isPunchedIn) {
-                    startOutsideTimer();
-                }
-            }
-
-            if (event.action === 'ENTER') {
-                isInsideGeofence = true;
-                clearOutsideTimer(); // intern returned in time — cancel the alert
-                try {
-                    await api.post('/intern/time/geofence-event', {
-                        event_type: 'entry',
-                        occurred_at: new Date().toISOString(),
-                    });
-
-                    if (activeExcursionId !== null) {
-                        await completeExcursion(activeExcursionId);
-                        activeExcursionId = null;
-                        await AsyncStorage.removeItem(EXCURSION_ID_KEY);
-                    }
-                } catch (e) {
-                    console.error('Failed to log geofence entry:', e);
-                }
-            }
-        };
-
-        // Fires on a fixed cadence regardless of movement — this is what
-        // drives the live-dashboard ping every 30s, and it keeps firing
-        // in the background because it's scheduled natively, not via a JS timer.
+        // Fires on a fixed cadence regardless of movement — keeps firing in the
+        // background because it's scheduled natively, not via a JS timer.
         const onHeartbeat = ({ location }: { location: Location }) => {
+            checkPolygonTransition(location);
             reportLiveLocation(location);
         };
 
-        // Fires on movement (motion-detected position changes) — used only
-        // to build the excursion trail while outside the geofence. Doesn't
-        // touch the live-location ping at all, so the two concerns stay separate.
+        // Fires on movement — detects polygon transitions and builds the
+        // excursion trail while outside.
         const onLocation = (location: Location) => {
+            checkPolygonTransition(location);
             recordExcursionPointIfOutside(location);
         };
 
-        const geofenceSub = BackgroundGeolocation.onGeofence(onGeofence);
         const heartbeatSub = BackgroundGeolocation.onHeartbeat(onHeartbeat);
         const locationSub = BackgroundGeolocation.onLocation(
             onLocation,
@@ -215,13 +361,12 @@ export function useGeoFenceListeners() {
                 text: 'Your location is being monitored while you are punched in.',
             },
         } as any).then(async () => {
-            // Resume an in-progress excursion across app restarts, same as before.
+            // Resume an in-progress excursion across app restarts.
             const storedId = await AsyncStorage.getItem(EXCURSION_ID_KEY);
             if (storedId) {
                 activeExcursionId = storedId;
                 isInsideGeofence = false;
-                // Resume the timer if they were already outside when the app restarted
-                // and they are punched in (isPunchedIn is restored by startMonitoring).
+                exitReported = true; // the excursion already exists on the server
                 if (isPunchedIn) {
                     startOutsideTimer();
                 }
@@ -229,7 +374,6 @@ export function useGeoFenceListeners() {
         });
 
         return () => {
-            geofenceSub.remove();
             heartbeatSub.remove();
             locationSub.remove();
         };
@@ -237,15 +381,14 @@ export function useGeoFenceListeners() {
 }
 
 /**
- * Call this from wherever punch-in/out state lives (TimeLogs) — just
- * start/stop, no listener ownership. Starting begins BOTH geofence
- * monitoring AND the 30s heartbeat broadcast; stopping halts everything.
+ * Start/stop tracking. Starts location tracking only (no native radius
+ * geofence). Inside/outside comes from the polygon set via setGeofencePolygon.
  */
 export function useGeofenceControls() {
     const isRegistered = useRef(false);
     const isStarting = useRef(false);
 
-    const startMonitoring = async (latitude: number, longitude: number, radius: number) => {
+    const startMonitoring = async () => {
         if (isRegistered.current || isStarting.current) return; // already running or starting
         isStarting.current = true;
         try {
@@ -254,19 +397,12 @@ export function useGeofenceControls() {
                 console.error('Location permission denied — cannot start monitoring.');
                 return;
             }
-            await BackgroundGeolocation.addGeofence({
-                identifier: OFFICE_GEOFENCE_ID,
-                latitude,
-                longitude,
-                radius: Math.max(radius, 150),
-                notifyOnEntry: true,
-                notifyOnExit: true,
-            });
             await BackgroundGeolocation.start();
             isPunchedIn = true;
             isRegistered.current = true;
+            console.log('[geofence] monitoring started, polygon:', Boolean(officePolygon));
         } catch (e) {
-            console.error('Failed to register geofence:', e);
+            console.error('Failed to start monitoring:', e);
         } finally {
             isStarting.current = false;
         }
@@ -275,13 +411,15 @@ export function useGeofenceControls() {
     const stopMonitoring = async () => {
         if (!isRegistered.current) return;
         try {
-            await BackgroundGeolocation.removeGeofence(OFFICE_GEOFENCE_ID);
             await BackgroundGeolocation.stop();
             isPunchedIn = false;
             clearOutsideTimer(); // always cancel the alert when punching out
+            clearExitConfirmTimer(); // punched out before the exit was confirmed: no excursion
+            exitReported = false;
+            isInsideGeofence = true; // fresh start for the next shift
             isRegistered.current = false;
         } catch (e) {
-            console.error('Failed to remove geofence:', e);
+            console.error('Failed to stop monitoring:', e);
         }
     };
 

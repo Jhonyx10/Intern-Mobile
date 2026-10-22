@@ -7,10 +7,17 @@
 
 import 'react-native-gesture-handler';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { StatusBar, StyleSheet, useColorScheme, View, Text, Pressable, Platform, Linking } from 'react-native';
 import {
-  SafeAreaProvider,
-} from 'react-native-safe-area-context';
+  StatusBar,
+  StyleSheet,
+  useColorScheme,
+  View,
+  Text,
+  Pressable,
+  Platform,
+  Linking,
+} from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import Navigation from './src/components/Navigation';
 import { useGeoFenceListeners } from './src/util/hooks/useGeoFenceMonitor';
 import { useAuth } from './src/util/queries/auth';
@@ -18,10 +25,11 @@ import { useFcmListener } from './src/util/hooks/useFcmListener';
 import { useFcmRegistration } from './src/util/hooks/useFcmRegistration';
 import { ToastProvider } from './src/components/ToastProvider';
 import { useGpsStatus } from './src/util/hooks/useGpsStatus';
-import "./global.css";
+import './global.css';
 import { OfflineSyncProvider } from './src/components/OfflineSyncProvider';
 import { queryClient } from './src/util/queryClient';
 import { ExcursionProvider } from './src/util/ExcursionContext';
+import GeofenceAutoMonitor from './src/components/GeofenceAutoMonitor';
 
 function App() {
   const isDarkMode = useColorScheme() === 'dark';
@@ -32,7 +40,9 @@ function App() {
         <OfflineSyncProvider>
           <ToastProvider>
             <ExcursionProvider>
-              <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
+              <StatusBar
+                barStyle={isDarkMode ? 'light-content' : 'dark-content'}
+              />
               <AppContent />
             </ExcursionProvider>
           </ToastProvider>
@@ -58,7 +68,9 @@ function AppContent() {
         <Pressable
           onPress={() => {
             if (Platform.OS === 'android') {
-              Linking.sendIntent('android.settings.LOCATION_SOURCE_SETTINGS').catch(() => Linking.openSettings());
+              Linking.sendIntent(
+                'android.settings.LOCATION_SOURCE_SETTINGS',
+              ).catch(() => Linking.openSettings());
             } else {
               Linking.openURL('app-settings:');
             }
@@ -73,11 +85,21 @@ function AppContent() {
             gap: 6,
           }}
         >
-          <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700', textAlign: 'center' }}>
+          <Text
+            style={{
+              color: '#fff',
+              fontSize: 12,
+              fontWeight: '700',
+              textAlign: 'center',
+            }}
+          >
             ⚠️ Location Services are Disabled. Tap to enable GPS.
           </Text>
         </Pressable>
       )}
+
+      {/* Tracks the intern against the company geofence polygon on every screen */}
+      {isLoggedIn && <GeofenceAutoMonitor />}
 
       <Navigation />
     </View>

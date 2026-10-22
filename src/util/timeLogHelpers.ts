@@ -8,6 +8,23 @@ export function formatLogTime(isoString?: string | null) {
 }
 
 export type PunchPhase = 'punch_in' | 'break_out' | 'break_in' | 'punch_out' | 'done';
+export type PunchPeriod = 'morning' | 'afternoon';
+
+export const PUNCH_META: Record<
+    PunchPhase,
+    { label: string; hint?: string; period?: PunchPeriod }
+> = {
+    punch_in: { label: 'Punch In' },
+    break_out: { label: 'Time Out', hint: 'Leaving for lunch', period: 'morning' },
+    break_in: { label: 'Time In', hint: 'Back from lunch', period: 'afternoon' },
+    punch_out: { label: 'Punch Out' },
+    done: { label: 'Done for today' },
+};
+
+export const PERIOD_LABEL: Record<PunchPeriod, string> = {
+    morning: 'Morning Time Out',
+    afternoon: 'Afternoon Time In',
+};
 
 export function getPunchPhase(status: any): PunchPhase {
     if (status.today_segments?.length > 0 && !status.open_log) return 'done';

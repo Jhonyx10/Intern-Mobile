@@ -42,6 +42,7 @@ import {
   getPunchPhase,
   isPointInPolygon,
   PunchPhase,
+  PUNCH_META,
 } from '../util/timeLogHelpers';
 
 import StatusBadge from '../components/timelogs/StatusBadge';
@@ -51,7 +52,6 @@ import TaskNoteModal from '../components/modal/TaskNoteModal';
 import PunchActionCard from '../components/timelogs/PunchActionCard';
 import { useExcursion } from '../util/ExcursionContext';
 
-import { useGeofenceControls } from '../util/hooks/useGeoFenceMonitor';
 import { useOfflineSync } from '../components/OfflineSyncProvider';
 import { getOfflineQueue } from '../util/offlineQueue';
 
@@ -65,7 +65,6 @@ export default function TimeLogs() {
   const { data: userData } = useUser();
   const { mutateAsync: timePunch, isPending: isPunching } = useTimePunch();
   const themeColor = userData?.settings?.theme_color || '#1D4ED8';
-  const { startMonitoring, stopMonitoring } = useGeofenceControls();
   const [cameraMode, setCameraMode] = useState<
     'punch_in' | 'punch_out' | 'break_out' | 'break_in' | null
   >(null);
@@ -75,6 +74,8 @@ export default function TimeLogs() {
   >(null);
 
   // Global excursion context — the modal itself is rendered at the app root.
+  // Geofence monitoring also runs at the app root (GeofenceAutoMonitor), so
+  // nothing here needs to start or stop it.
   const { pendingCount: pendingExcursionCount, openFirstPending } =
     useExcursion();
 
@@ -235,27 +236,6 @@ export default function TimeLogs() {
     if (cameraMode === 'punch_out') return handlePunch(imageUri, 'time_out');
   };
 
-  useEffect(() => {
-    if (
-      status?.open_log &&
-      dashboard?.company?.latitude &&
-      dashboard?.company?.longitude
-    ) {
-      startMonitoring(
-        dashboard.company.latitude,
-        dashboard.company.longitude,
-        dashboard.company.radius_meters ?? 150,
-      );
-    } else {
-      stopMonitoring();
-    }
-  }, [
-    Boolean(status?.open_log), // was: status?.open_log (new object every clone)
-    dashboard?.company?.latitude,
-    dashboard?.company?.longitude,
-    dashboard?.company?.radius_meters,
-  ]);
-
   if (isLoading) {
     return (
       <View className="flex-1 items-center justify-center bg-slate-50">
@@ -329,25 +309,27 @@ export default function TimeLogs() {
       color: themeColor,
     },
     break_out: {
-      label: 'Break Out',
+      label: PUNCH_META.break_out.label, // "Time Out"
+      period: PUNCH_META.break_out.period, // "morning"
       icon: Coffee,
       disabled: isSyncing,
       hint: isSyncing
         ? 'Syncing...'
         : !isInGeofence
-        ? 'Fieldwork mode (Break allowed)'
-        : 'Tap to break out',
+        ? 'Fieldwork mode (Time out allowed)'
+        : 'Tap to time out',
       onPress: () => handleActionPress('break_out'),
       color: '#F59E0B',
     },
     break_in: {
-      label: 'Break In',
+      label: PUNCH_META.break_in.label, // "Time In"
+      period: PUNCH_META.break_in.period, // "afternoon"
       icon: Sunrise,
       disabled: isSyncing,
       hint: isSyncing
         ? 'Syncing...'
         : !isInGeofence
-        ? 'Fieldwork mode (Resume allowed)'
+        ? 'Fieldwork mode (Time in allowed)'
         : 'Tap to resume work',
       onPress: () => handleActionPress('break_in'),
       color: '#10B981',
@@ -584,13 +566,13 @@ export default function TimeLogs() {
               />
               <InfoRow
                 icon={Coffee}
-                label="Break Out"
+                label="Time Out"
                 value={formatLogTime(timelineEntry?.break_out)}
                 themeColor={themeColor}
               />
               <InfoRow
                 icon={Sunrise}
-                label="Break In"
+                label="Time In"
                 value={formatLogTime(timelineEntry?.break_in)}
                 themeColor={themeColor}
               />

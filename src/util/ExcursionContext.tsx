@@ -33,12 +33,12 @@ export function useExcursion() {
  * Mount this once at the app root (inside QueryClientProvider + ToastProvider).
  * It polls for pending excursions and floats the reason modal above every screen.
  */
-export function ExcursionProvider({ children }: { children: React.ReactNode }) {
+export function ExcursionProvider({ children, isLoggedIn }: { children: React.ReactNode; isLoggedIn: boolean }) {
     const { showToast } = useToast();
     const { data: userData } = useUser();
     const themeColor = userData?.settings?.theme_color || '#1D4ED8';
 
-    const { data: pendingExcursions } = usePendingExcursions();
+    const { data: pendingExcursions } = usePendingExcursions(isLoggedIn);
     const { mutateAsync: updateExcursionReason, isPending: isSubmitting } =
         useUpdateExcursionReason();
 

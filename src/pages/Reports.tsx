@@ -15,10 +15,8 @@ import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
   Clock,
-  Coffee,
-  Sunrise,
-  LogIn,
-  LogOut,
+  Sun,
+  Sunset,
   AlertCircle,
   FileText,
   BarChart2,
@@ -44,13 +42,15 @@ import {
 import { useUser } from '../util/queries/auth';
 import { useDashboard } from '../util/queries/dashboard';
 import { withAlpha, formatLogTime } from '../util/timeLogHelpers';
+import { parseTaskNote } from '../util/taskNote';
 
-// Weekly report PDF (the original file, restored)
+// Weekly report PDF (new format: Morning/Afternoon rows + supervisor signature)
 import {
   exportTimeLogReportPdf,
   formatWeekLabel,
   getWeekStart,
   filterLogsToWeek,
+  suggestWeekNo,
 } from '../util/timeLogReportPdf';
 
 // DTR export (PDF + CSV) used by the export modal
@@ -91,7 +91,37 @@ const PRESETS: { key: TimeLogPreset; label: string }[] = [
   { key: 'yearly', label: 'Yearly' },
 ];
 
-// Same card as Time Log History
+// One half of the day (morning / afternoon) inside the compact card
+function SessionColumn({
+  icon: Icon,
+  accent,
+  label,
+  range,
+}: {
+  icon: any;
+  accent: string;
+  label: string;
+  range: string;
+}) {
+  return (
+    <View className="flex-1 px-3">
+      <View className="flex-row items-center mb-0.5">
+        <Icon color={accent} size={11} strokeWidth={2.5} />
+        <Text className="ml-1 text-[10px] font-bold text-slate-400">
+          {label}
+        </Text>
+      </View>
+      <Text
+        className="text-[12px] font-semibold text-slate-800"
+        numberOfLines={1}
+      >
+        {range}
+      </Text>
+    </View>
+  );
+}
+
+// Compact card used by the list and by the calendar day sheet
 function LogCard({
   log,
   themeColor,
@@ -102,131 +132,90 @@ function LogCard({
   const isAutoClosed =
     log.verification_method === 'auto_closed_missed_punch_out';
 
+  const note = parseTaskNote(log.task_note);
+  const hasBreak = Boolean(log.break_out || log.break_in);
+
+  const end = (iso: string | null) => (log.is_open ? '…' : formatLogTime(iso));
+  const morningRange = `${formatLogTime(log.time_in)} – ${
+    log.break_out ? formatLogTime(log.break_out) : end(log.time_out)
+  }`;
+  const afternoonRange = log.break_in
+    ? `${formatLogTime(log.break_in)} – ${end(log.time_out)}`
+    : '—';
+
   return (
     <View
-      className="rounded-3xl bg-white mb-4"
+      className="rounded-2xl bg-white mb-3"
       style={{
         shadowColor: '#0F172A',
-        shadowOpacity: 0.06,
-        shadowRadius: 14,
-        shadowOffset: { width: 0, height: 5 },
-        elevation: 2,
+        shadowOpacity: 0.05,
+        shadowRadius: 8,
+        shadowOffset: { width: 0, height: 3 },
+        elevation: 1,
         borderWidth: 1,
         borderColor: '#F1F5F9',
       }}
     >
-      <View className="px-5 pt-5 pb-2 flex-row items-center justify-between">
-        <Text className="text-[13px] font-bold text-slate-800">
+      {/* Date + status */}
+      <View className="px-4 pt-3 pb-2 flex-row items-center justify-between">
+        <Text className="text-[12px] font-bold text-slate-800">
           {formatLogDate(log.time_in)}
         </Text>
         {log.is_open ? (
-          <View className="rounded-full px-3 py-1 bg-green-50">
-            <Text className="text-[10px] font-bold uppercase tracking-wide text-green-700">
+          <View className="rounded-full px-2 py-0.5 bg-green-50">
+            <Text className="text-[9px] font-bold uppercase tracking-wide text-green-700">
               In Progress
             </Text>
           </View>
         ) : isAutoClosed ? (
-          <View className="rounded-full px-3 py-1 bg-amber-50">
-            <Text className="text-[10px] font-bold uppercase tracking-wide text-amber-700">
+          <View className="rounded-full px-2 py-0.5 bg-amber-50">
+            <Text className="text-[9px] font-bold uppercase tracking-wide text-amber-700">
               Auto-closed
             </Text>
           </View>
         ) : (
-          <View className="rounded-full px-3 py-1 bg-slate-50">
-            <Text className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
+          <View className="rounded-full px-2 py-0.5 bg-slate-50">
+            <Text className="text-[9px] font-bold uppercase tracking-wide text-slate-500">
               Completed
             </Text>
           </View>
         )}
       </View>
 
-      <View className="px-5 pb-4">
-        <View className="flex-row items-center py-2">
-          <View
-            className="items-center justify-center rounded-full mr-3"
-            style={{
-              width: 30,
-              height: 30,
-              backgroundColor: withAlpha(themeColor, '12'),
-            }}
-          >
-            <LogIn color={themeColor} size={14} strokeWidth={2.25} />
-          </View>
-          <Text className="text-[12px] text-slate-400 flex-1">Time In</Text>
-          <Text className="text-[13px] font-semibold text-slate-800">
-            {formatLogTime(log.time_in)}
-          </Text>
+      <View className="px-4 pb-3">
+        {/* Morning | Afternoon */}
+        <View className="flex-row rounded-xl bg-slate-50 py-2">
+          <SessionColumn
+            icon={Sun}
+            accent="#F59E0B"
+            label={hasBreak ? 'Morning' : 'Shift'}
+            range={morningRange}
+          />
+          {hasBreak && (
+            <>
+              <View style={{ width: 1, backgroundColor: '#E2E8F0' }} />
+              <SessionColumn
+                icon={Sunset}
+                accent="#EA580C"
+                label="Afternoon"
+                range={afternoonRange}
+              />
+            </>
+          )}
         </View>
 
-        {(log.break_out || log.break_in) && (
-          <>
-            <View className="flex-row items-center py-2">
-              <View
-                className="items-center justify-center rounded-full mr-3"
-                style={{
-                  width: 30,
-                  height: 30,
-                  backgroundColor: withAlpha(themeColor, '12'),
-                }}
-              >
-                <Coffee color={themeColor} size={14} strokeWidth={2.25} />
-              </View>
-              <Text className="text-[12px] text-slate-400 flex-1">
-                Break Out
-              </Text>
-              <Text className="text-[13px] font-semibold text-slate-800">
-                {formatLogTime(log.break_out)}
-              </Text>
-            </View>
-            <View className="flex-row items-center py-2">
-              <View
-                className="items-center justify-center rounded-full mr-3"
-                style={{
-                  width: 30,
-                  height: 30,
-                  backgroundColor: withAlpha(themeColor, '12'),
-                }}
-              >
-                <Sunrise color={themeColor} size={14} strokeWidth={2.25} />
-              </View>
-              <Text className="text-[12px] text-slate-400 flex-1">
-                Break In
-              </Text>
-              <Text className="text-[13px] font-semibold text-slate-800">
-                {formatLogTime(log.break_in)}
-              </Text>
-            </View>
-          </>
-        )}
-
-        <View className="flex-row items-center py-2">
-          <View
-            className="items-center justify-center rounded-full mr-3"
-            style={{
-              width: 30,
-              height: 30,
-              backgroundColor: withAlpha(themeColor, '12'),
-            }}
-          >
-            <LogOut color={themeColor} size={14} strokeWidth={2.25} />
-          </View>
-          <Text className="text-[12px] text-slate-400 flex-1">Time Out</Text>
-          <Text className="text-[13px] font-semibold text-slate-800">
-            {log.is_open ? '—' : formatLogTime(log.time_out)}
-          </Text>
-        </View>
-
-        <View className="flex-row items-center justify-between mt-2 pt-3 border-t border-slate-100">
+        {/* Duration + photos */}
+        <View className="flex-row items-center justify-between mt-2">
           <View className="flex-row items-center">
-            <Clock color="#94A3B8" size={13} />
-            <Text className="ml-1.5 text-[12px] font-semibold text-slate-500">
+            <Clock color="#94A3B8" size={12} />
+            <Text className="ml-1 text-[11px] font-semibold text-slate-500">
               {log.duration_hours != null ? `${log.duration_hours} hrs` : '—'}
             </Text>
           </View>
           {log.task_photos_count > 0 && (
             <View className="flex-row items-center">
-              <FileText color="#94A3B8" size={13} />
-              <Text className="ml-1.5 text-[12px] font-medium text-slate-500">
+              <FileText color="#94A3B8" size={12} />
+              <Text className="ml-1 text-[11px] font-medium text-slate-500">
                 {log.submitted_task_photos_count}/{log.task_photos_count} photo
                 {log.task_photos_count === 1 ? '' : 's'}
               </Text>
@@ -234,22 +223,45 @@ function LogCard({
           )}
         </View>
 
-        {log.task_note && (
-          <Text
-            className="text-[12px] text-slate-500 mt-2 leading-5"
-            numberOfLines={3}
-          >
-            {log.task_note}
-          </Text>
-        )}
-
-        {isAutoClosed && (
-          <View className="flex-row items-start mt-3 rounded-2xl bg-amber-50 px-3 py-2.5">
-            <AlertCircle color="#D97706" size={14} style={{ marginTop: 1 }} />
-            <Text className="ml-2 text-[11px] text-amber-700 flex-1 leading-4">
-              This shift was automatically timed out because a punch-out was
-              missed.
-            </Text>
+        {/* Task notes: one short line per session */}
+        {(note.morning || note.afternoon || note.general) && (
+          <View className="mt-2 pt-2 border-t border-slate-100">
+            {note.morning ? (
+              <View className="flex-row items-center">
+                <Sun color="#F59E0B" size={11} />
+                <Text
+                  className="ml-1.5 text-[11px] text-slate-500 flex-1"
+                  numberOfLines={1}
+                >
+                  {note.morning}
+                </Text>
+              </View>
+            ) : null}
+            {note.afternoon ? (
+              <View
+                className="flex-row items-center"
+                style={{ marginTop: note.morning ? 3 : 0 }}
+              >
+                <Sunset color="#EA580C" size={11} />
+                <Text
+                  className="ml-1.5 text-[11px] text-slate-500 flex-1"
+                  numberOfLines={1}
+                >
+                  {note.afternoon}
+                </Text>
+              </View>
+            ) : null}
+            {note.general ? (
+              <View className="flex-row items-center">
+                <FileText color="#94A3B8" size={11} />
+                <Text
+                  className="ml-1.5 text-[11px] text-slate-500 flex-1"
+                  numberOfLines={1}
+                >
+                  {note.general}
+                </Text>
+              </View>
+            ) : null}
           </View>
         )}
       </View>
@@ -341,13 +353,25 @@ export default function Reports() {
         return;
       }
 
+      const studentName = userData?.user?.name ?? 'Student'; // adjust to your user field
+      const supervisor = dashboard?.supervisor;
+
       await exportTimeLogReportPdf({
-        studentName: userData?.user?.name ?? 'Student', // adjust to your user field
+        studentName,
         logs: weekLogs,
         weekStart,
-        // weekNo: 3,
-        // verifiedBy: { name: '...', organization: '...' },
-        // notedBy: { name: '...', position: '...' },
+        // Week 1 = the week of the student's first time log
+        weekNo: suggestWeekNo(allLogs, weekStart),
+        // "Noted by" (left signature). Omitted when no supervisor is assigned.
+        supervisorBy: supervisor?.name
+          ? {
+              name: supervisor.name,
+              title: supervisor.position_title,
+              organization: dashboard?.company?.name,
+            }
+          : undefined,
+        // "Prepared by" (right signature)
+        studentBy: { name: studentName },
       });
     } catch (e) {
       console.error('PDF Export Error:', e);
@@ -579,11 +603,11 @@ export default function Reports() {
           </Pressable>
         </View>
       ) : !isCalendar ? (
-        // ---- LIST VIEW (same as Time Log History) ----
+        // ---- LIST VIEW ----
         <FlatList
           data={logs}
           keyExtractor={item => String(item.id)}
-          contentContainerStyle={{ padding: 20, paddingBottom: 106 }}
+          contentContainerStyle={{ padding: 16, paddingBottom: 106 }}
           renderItem={({ item, index }) => (
             <Animated.View
               entering={FadeInUp.duration(350).delay(Math.min(index, 6) * 40)}

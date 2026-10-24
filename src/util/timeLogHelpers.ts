@@ -14,10 +14,10 @@ export const PUNCH_META: Record<
     PunchPhase,
     { label: string; hint?: string; period?: PunchPeriod }
 > = {
-    punch_in: { label: 'Punch In' },
+    punch_in: { label: 'Time In' },
     break_out: { label: 'Time Out', hint: 'Leaving for lunch', period: 'morning' },
     break_in: { label: 'Time In', hint: 'Back from lunch', period: 'afternoon' },
-    punch_out: { label: 'Punch Out' },
+    punch_out: { label: 'Time Out' },
     done: { label: 'Done for today' },
 };
 

@@ -39,12 +39,10 @@ function App() {
       <QueryClientProvider client={queryClient}>
         <OfflineSyncProvider>
           <ToastProvider>
-            <ExcursionProvider>
-              <StatusBar
-                barStyle={isDarkMode ? 'light-content' : 'dark-content'}
-              />
-              <AppContent />
-            </ExcursionProvider>
+            <StatusBar
+              barStyle={isDarkMode ? 'light-content' : 'dark-content'}
+            />
+            <AppContent />
           </ToastProvider>
         </OfflineSyncProvider>
       </QueryClientProvider>
@@ -54,55 +52,56 @@ function App() {
 
 function AppContent() {
   const { data: token } = useAuth();
+  const isLoggedIn = Boolean(token);
   useGeoFenceListeners();
   useFcmListener();
-  useFcmRegistration(Boolean(token));
+  useFcmRegistration(isLoggedIn);
   const { isGpsEnabled } = useGpsStatus();
 
-  const isLoggedIn = Boolean(token);
-
   return (
-    <View style={styles.container}>
-      {/* GPS Location Enforcement Banner */}
-      {isLoggedIn && !isGpsEnabled && (
-        <Pressable
-          onPress={() => {
-            if (Platform.OS === 'android') {
-              Linking.sendIntent(
-                'android.settings.LOCATION_SOURCE_SETTINGS',
-              ).catch(() => Linking.openSettings());
-            } else {
-              Linking.openURL('app-settings:');
-            }
-          }}
-          style={{
-            backgroundColor: '#EF4444',
-            paddingVertical: 10,
-            paddingHorizontal: 16,
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 6,
-          }}
-        >
-          <Text
+    <ExcursionProvider isLoggedIn={isLoggedIn}>
+      <View style={styles.container}>
+        {/* GPS Location Enforcement Banner */}
+        {isLoggedIn && !isGpsEnabled && (
+          <Pressable
+            onPress={() => {
+              if (Platform.OS === 'android') {
+                Linking.sendIntent(
+                  'android.settings.LOCATION_SOURCE_SETTINGS',
+                ).catch(() => Linking.openSettings());
+              } else {
+                Linking.openURL('app-settings:');
+              }
+            }}
             style={{
-              color: '#fff',
-              fontSize: 12,
-              fontWeight: '700',
-              textAlign: 'center',
+              backgroundColor: '#EF4444',
+              paddingVertical: 10,
+              paddingHorizontal: 16,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
             }}
           >
-            ⚠️ Location Services are Disabled. Tap to enable GPS.
-          </Text>
-        </Pressable>
-      )}
+            <Text
+              style={{
+                color: '#fff',
+                fontSize: 12,
+                fontWeight: '700',
+                textAlign: 'center',
+              }}
+            >
+              ⚠️ Location Services are Disabled. Tap to enable GPS.
+            </Text>
+          </Pressable>
+        )}
 
-      {/* Tracks the intern against the company geofence polygon on every screen */}
-      {isLoggedIn && <GeofenceAutoMonitor />}
+        {/* Tracks the intern against the company geofence polygon on every screen */}
+        {isLoggedIn && <GeofenceAutoMonitor />}
 
-      <Navigation />
-    </View>
+        <Navigation />
+      </View>
+    </ExcursionProvider>
   );
 }
 

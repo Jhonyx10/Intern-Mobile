@@ -31,13 +31,14 @@ export const updateExcursionReason = async (excursionId: number | string, reason
     return data;
 };
 
-export const usePendingExcursions = () => {
+export const usePendingExcursions = (isLoggedIn = true) => {
     return useQuery({
         queryKey: ['pendingExcursions'],
         queryFn: getPendingExcursions,
         // Excursions complete in the background (outside React), so poll
         // to pick them up while the screen is already open.
         refetchInterval: 15000,
+        enabled: isLoggedIn,
     });
 };
 

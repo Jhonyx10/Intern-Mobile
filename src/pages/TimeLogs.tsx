@@ -277,7 +277,7 @@ export default function TimeLogs() {
   }
 
   let punchInDisabled = false;
-  let punchInHint = 'Tap to punch in';
+  let punchInHint = 'Tap to time in';
 
   if (!isScheduleSet) {
     punchInDisabled = true;
@@ -295,7 +295,7 @@ export default function TimeLogs() {
 
   const punchConfig: Record<PunchPhase, any> = {
     punch_in: {
-      label: 'Punch In',
+      label: 'Time In',
       icon: LogIn,
       disabled: punchInDisabled || isSyncing,
       hint: isSyncing ? 'Syncing...' : punchInHint,
@@ -335,14 +335,14 @@ export default function TimeLogs() {
       color: '#10B981',
     },
     punch_out: {
-      label: 'Punch Out',
+      label: 'Time Out',
       icon: LogOut,
       disabled: isSyncing,
       hint: isSyncing
         ? 'Syncing...'
         : !isInGeofence
         ? 'Fieldwork mode (Note required)'
-        : 'Tap to punch out',
+        : 'Tap to time out',
       onPress: () => handleActionPress('punch_out'),
       color: '#EF4444',
     },

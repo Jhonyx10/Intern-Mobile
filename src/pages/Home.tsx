@@ -1,6 +1,19 @@
 import { Text, View, ActivityIndicator, ScrollView, Pressable, Modal, TextInput, KeyboardAvoidingView, Platform, PermissionsAndroid } from 'react-native';
 import { useState } from 'react';
-import { Building2, Clock, CalendarDays, TrendingUp, Send, X, MapPin, Bell, ClipboardList, ScanFace, ShieldAlert } from 'lucide-react-native';
+import {
+  Building2,
+  Clock,
+  CalendarDays,
+  TrendingUp,
+  Send,
+  X,
+  MapPin,
+  Bell,
+  ClipboardList,
+  ScanFace,
+  ShieldAlert,
+  UserCheck,
+} from 'lucide-react-native';
 import LinearGradient from 'react-native-linear-gradient';
 import Animated, { FadeIn, FadeInUp, FadeInDown } from 'react-native-reanimated';
 import Geolocation from '@react-native-community/geolocation';
@@ -277,7 +290,15 @@ export default function Home() {
         );
     }
 
-    const { student, course, company, progress, placement_status, removal_reason } = dashboard;
+    const {
+      student,
+      course,
+      company,
+      supervisor,
+      progress,
+      placement_status,
+      removal_reason,
+    } = dashboard;
     const firstName = student?.full_name ? student.full_name.split(' ')[0] : 'Intern';
     const isRemoved = placement_status === 'removed';
     const isUnassigned = placement_status === 'unassigned' || (!company || !company.name);
@@ -687,6 +708,18 @@ export default function Home() {
                 value={company?.name || 'Unassigned'}
                 themeColor={themeColor}
               />
+              {supervisor?.name && (
+                <InfoRow
+                  icon={UserCheck}
+                  label="Supervisor"
+                  value={
+                    supervisor.position_title
+                      ? `${supervisor.name} (${supervisor.position_title})`
+                      : supervisor.name
+                  }
+                  themeColor={themeColor}
+                />
+              )}
               <InfoRow
                 icon={TrendingUp}
                 label="Geo-fence Radius"
@@ -766,7 +799,6 @@ export default function Home() {
                       onChangeText={setCompanyName}
                     />
                   </View>
-
                   <View className="mb-6">
                     <Text className="text-xs font-semibold text-slate-700 mb-1">
                       Company Address

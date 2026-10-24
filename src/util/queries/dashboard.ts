@@ -44,6 +44,12 @@ export interface DashboardData {
             coordinates: number[][][];
         };
     };
+     supervisor: {
+        id: number;
+        name: string | null;
+        email: string | null;
+        position_title: string | null;
+    } | null;
     progress: DashboardProgress;
     placement_status: 'active' | 'removed' | 'unassigned';
     removal_reason: string | null;

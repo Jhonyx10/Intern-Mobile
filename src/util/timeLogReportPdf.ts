@@ -1,8 +1,10 @@
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import type { RowInput, Styles } from 'jspdf-autotable';
 import ReactNativeBlobUtil from 'react-native-blob-util';
 import { Platform } from 'react-native';
 import type { TimeLogEntry } from './queries/timelog';
+import { parseTaskNote } from './taskNote';
 import {
     addDays,
     differenceInCalendarWeeks,
@@ -18,41 +20,53 @@ export type TimeLogReportOptions = {
     /** Any date inside the week to print. It is snapped to that week's Monday. */
     weekStart: Date;
     weekNo?: number | string;
-    verifiedBy?: { name: string; organization?: string };
-    notedBy?: { name: string; position?: string };
+    /** Left signature: company supervisor ("Noted by") */
+    supervisorBy?: { name: string; title?: string | null; organization?: string };
+    /** Right signature: the intern ("Prepared by") */
+    studentBy?: { name: string };
     school?: { name?: string; address?: string; college?: string; subject?: string };
-    /**
-     * Header logos as an https URL or a `data:image/png;base64,...` URI.
-     * jsPDF can only embed PNG and JPEG, so webp logos are skipped.
-     */
+    /** https URL or `data:image/png;base64,...`. jsPDF can't embed webp. */
     logos?: { left?: string | null; right?: string | null };
     imageHeaders?: Record<string, string>;
     fileName?: string;
 };
 
 type Photo = { dataUri: string; format: 'JPEG' | 'PNG'; w: number; h: number };
+type RGB = [number, number, number];
+
+type ReportSession = {
+    present: boolean;
+    task_note: string;
+    hours: number;
+    timeRange?: string;
+    photoUrl?: string | null;
+};
 
 export type WeeklyReportRow = {
     date: Date;
-    task_note: string;
-    hours: number;
-    photoUrl: string | null;
+    morning?: ReportSession;
+    afternoon?: ReportSession;
+    empty?: boolean;
 };
 
-const ORANGE: [number, number, number] = [237, 125, 49];
-const PEACH: [number, number, number] = [251, 228, 213];
-const NAVY: [number, number, number] = [31, 56, 100];
-const RULE_BLUE: [number, number, number] = [68, 114, 196];
-const INK: [number, number, number] = [30, 30, 30];
+const ORANGE: RGB = [237, 125, 49];
+const PEACH: RGB = [251, 228, 213];
+const WHITE: RGB = [255, 255, 255];
+const NAVY: RGB = [31, 56, 100];
+const RULE_BLUE: RGB = [68, 114, 196];
+const INK: RGB = [30, 30, 30];
+const MUTED: RGB = [120, 120, 120];
 const MARGIN = 18;
 const PHOTO_ROW_HEIGHT = 30;
 
+type SessionKey = 'morning' | 'afternoon';
+
 // ── Week helpers ──────────────────────────────────────────────────
 
-export const getWeekStart = (d: Date = new Date()) => startOfWeek(d, { weekStartsOn: 1 }); // Monday
+export const getWeekStart = (d: Date = new Date()) => startOfWeek(d, { weekStartsOn: 1 });
 
 export function getWeekRange(weekStart: Date) {
-    return { start: weekStart, end: endOfWeek(weekStart, { weekStartsOn: 1 }) }; // Sunday 23:59:59
+    return { start: weekStart, end: endOfWeek(weekStart, { weekStartsOn: 1 }) };
 }
 
 export function formatWeekLabel(weekStart: Date) {
@@ -75,10 +89,82 @@ export function suggestWeekNo(allLogs: TimeLogEntry[], weekStart: Date): number 
     return Math.max(1, differenceInCalendarWeeks(weekStart, first, { weekStartsOn: 1 }) + 1);
 }
 
+// ── Per-session accumulator (a day can have more than one log) ────
+
+type Acc = {
+    present: boolean;
+    start: number | null;
+    end: number | null;
+    minutes: number;
+    notes: Set<string>;
+    photoUrl: string | null;
+};
+
+const newAcc = (): Acc => ({
+    present: false,
+    start: null,
+    end: null,
+    minutes: 0,
+    notes: new Set(),
+    photoUrl: null,
+});
+
+function addRange(acc: Acc, startIso: string, endIso: string) {
+    const start = Date.parse(startIso);
+    if (Number.isNaN(start)) return;
+
+    acc.present = true;
+    acc.start = acc.start === null ? start : Math.min(acc.start, start);
+
+    if (!endIso) return;
+    const end = Date.parse(endIso);
+    if (Number.isNaN(end)) return;
+
+    acc.end = acc.end === null ? end : Math.max(acc.end, end);
+    acc.minutes += Math.max(0, Math.round((end - start) / 60000));
+}
+
+function toSession(acc: Acc): ReportSession {
+    const hasRange = acc.present && acc.start !== null;
+    return {
+        present: acc.present,
+        task_note: acc.present
+            ? Array.from(acc.notes).join('\n') || 'No accomplishment recorded.'
+            : '—',
+        hours: Math.round((acc.minutes / 60) * 10) / 10,
+        timeRange: hasRange
+            ? `${format(acc.start as number, 'h:mm a')} – ${
+                  acc.end !== null ? format(acc.end, 'h:mm a') : 'ongoing'
+              }`
+            : undefined,
+        photoUrl: acc.photoUrl,
+    };
+}
+
+const str = (v: unknown) => (typeof v === 'string' ? v : '');
+
+// A photo belongs to the afternoon if it was uploaded after the break ended
+function photoSession(photo: any, breakIn: string): SessionKey {
+    const raw = String(photo?.session ?? photo?.period ?? '').toLowerCase();
+    if (raw.startsWith('morn')) return 'morning';
+    if (raw.startsWith('after')) return 'afternoon';
+
+    const stamp = str(photo?.submitted_at) || str(photo?.created_at);
+    if (stamp && breakIn) {
+        const uploaded = Date.parse(stamp);
+        const resumed = Date.parse(breakIn);
+        if (!Number.isNaN(uploaded) && !Number.isNaN(resumed)) {
+            return uploaded >= resumed ? 'afternoon' : 'morning';
+        }
+    }
+    return 'morning';
+}
+
 /**
- * One row per weekday (Mon–Fri) of the week containing `weekStart`.
- * Saturday / Sunday are only included when the student logged time on them.
- * Same behaviour as the web report.
+ * One entry per weekday (Mon–Fri), each with a morning and afternoon session.
+ * Sat/Sun are only included when the student logged time.
+ *   Morning   = time in  → break out (or time out if no break)
+ *   Afternoon = break in → time out
  */
 export function buildWeeklyReportRows(logs: TimeLogEntry[], weekStart: Date): WeeklyReportRow[] {
     const monday = getWeekStart(weekStart);
@@ -100,44 +186,141 @@ export function buildWeeklyReportRows(logs: TimeLogEntry[], weekStart: Date): We
             (a, b) => new Date(a.time_in as string).getTime() - new Date(b.time_in as string).getTime(),
         );
 
-        const isWeekend = i >= 5;
-        if (isWeekend && dayLogs.length === 0) continue;
+        if (i >= 5 && dayLogs.length === 0) continue;
+        if (dayLogs.length === 0) {
+            rows.push({ date: day, empty: true });
+            continue;
+        }
 
-        const minutes = dayLogs.reduce((sum, l) => sum + (l.duration_minutes ?? 0), 0);
+        const morning = newAcc();
+        const afternoon = newAcc();
 
-        const tasks = Array.from(
-            new Set(dayLogs.map((l) => l.task_note?.trim() ?? '').filter(Boolean)),
-        );
+        for (const log of dayLogs) {
+            const l = log as any;
+            const timeIn = str(l.time_in);
+            const breakOut = str(l.break_out);
+            const breakIn = str(l.break_in);
+            const timeOut = str(l.time_out);
 
-        let photoUrl: string | null = null;
-        for (const l of dayLogs) {
-            const url = l.task_photos?.[0]?.url;
-            if (url) {
-                photoUrl = url;
-                break;
+            addRange(morning, timeIn, breakOut || timeOut);
+            if (breakIn) addRange(afternoon, breakIn, timeOut);
+
+            const rawNote = str(l.task_note).trim();
+            if (rawNote) {
+                const note = parseTaskNote(rawNote);
+                if (note.morning) {
+                    morning.present = true;
+                    morning.notes.add(note.morning);
+                }
+                if (note.afternoon) {
+                    afternoon.present = true;
+                    afternoon.notes.add(note.afternoon);
+                }
+                if (note.general) {
+                    morning.present = true;
+                    morning.notes.add(note.general);
+                }
+            }
+
+            for (const p of l.task_photos ?? []) {
+                if (!p?.url) continue;
+                const target = photoSession(p, breakIn) === 'afternoon' ? afternoon : morning;
+                if (!target.photoUrl) target.photoUrl = p.url;
             }
         }
 
-        rows.push({
-            date: day,
-            task_note:
-                dayLogs.length === 0
-                    ? 'No time log recorded.'
-                    : tasks.length > 0
-                      ? tasks.join('\n')
-                      : 'No accomplishment recorded.',
-            hours: Math.round((minutes / 60) * 10) / 10,
-            photoUrl,
-        });
+        rows.push({ date: day, morning: toSession(morning), afternoon: toSession(afternoon) });
     }
 
     return rows;
 }
 
+// ── Table body ────────────────────────────────────────────────────
+
+const cell = (content: string, fill: RGB, extra: Partial<Styles> = {}) => ({
+    content,
+    styles: { fillColor: fill, ...extra } as Partial<Styles>,
+});
+
+const roundHours = (v: number) => Math.round(v * 10) / 10;
+
+function buildBody(rows: WeeklyReportRow[]) {
+    const body: RowInput[] = [];
+    const photoUrls: (string | null)[] = [];
+    let totalHours = 0;
+
+    rows.forEach((r, dayIdx) => {
+        const fill = dayIdx % 2 === 0 ? PEACH : WHITE;
+        const dateStr = format(r.date, 'MM/dd/yyyy');
+        const dateStyles: Partial<Styles> = { halign: 'center', fontStyle: 'bold', valign: 'middle' };
+
+        if (r.empty) {
+            body.push([
+                cell(dateStr, fill, dateStyles),
+                {
+                    ...cell('No time log recorded.', fill, {
+                        halign: 'center',
+                        fontStyle: 'italic',
+                        textColor: MUTED,
+                    }),
+                    colSpan: 4,
+                },
+            ]);
+            photoUrls.push(null);
+            return;
+        }
+
+        const sessions: [string, ReportSession][] = [
+            ['Morning', r.morning ?? { present: false, task_note: '—', hours: 0 }],
+            ['Afternoon', r.afternoon ?? { present: false, task_note: '—', hours: 0 }],
+        ];
+
+        sessions.forEach(([label, s], i) => {
+            totalHours += s.hours;
+            const sessionCell = cell(
+                s.timeRange ? `${label}\n${s.timeRange}` : label,
+                fill,
+                { halign: 'center', fontStyle: 'bold', fontSize: 8 },
+            );
+            const noteCell = cell(
+                s.task_note,
+                fill,
+                s.present ? { halign: 'left' } : { halign: 'left', textColor: MUTED, fontStyle: 'italic' },
+            );
+            const hoursCell = cell(s.present ? `${s.hours}hrs` : '—', fill, {
+                halign: 'center',
+                fontStyle: 'bold',
+            });
+            const photoCell = cell('', fill);
+
+            if (i === 0) {
+                body.push([
+                    { ...cell(dateStr, fill, dateStyles), rowSpan: 2 },
+                    sessionCell,
+                    noteCell,
+                    hoursCell,
+                    photoCell,
+                ]);
+            } else {
+                body.push([sessionCell, noteCell, hoursCell, photoCell]);
+            }
+            photoUrls.push(s.photoUrl ?? null);
+        });
+    });
+
+    const totalStyles: Partial<Styles> = { fontStyle: 'bold', textColor: WHITE };
+    body.push([
+        { ...cell('TOTAL HOURS', ORANGE, { ...totalStyles, halign: 'right' }), colSpan: 3 },
+        cell(`${roundHours(totalHours)}hrs`, ORANGE, { ...totalStyles, halign: 'center' }),
+        cell('', ORANGE),
+    ]);
+    photoUrls.push(null);
+
+    return { body, photoUrls };
+}
+
 // ── Images ────────────────────────────────────────────────────────
 
-// Accepts an https URL or a data: URI. jsPDF can't embed webp, so those are
-// skipped (the PDF still exports).
 async function loadPhoto(
     doc: jsPDF,
     src?: string | null,
@@ -181,7 +364,7 @@ function fit(p: Photo, maxW: number, maxH: number) {
 // ── PDF ───────────────────────────────────────────────────────────
 
 export async function exportTimeLogReportPdf(opts: TimeLogReportOptions) {
-    const { studentName, verifiedBy, notedBy, imageHeaders, weekNo, logos } = opts;
+    const { studentName, supervisorBy, studentBy, imageHeaders, weekNo, logos } = opts;
     const weekStart = getWeekStart(opts.weekStart);
     const fileName = opts.fileName ?? `weekly-report-${format(weekStart, 'yyyy-MM-dd')}.pdf`;
 
@@ -192,18 +375,17 @@ export async function exportTimeLogReportPdf(opts: TimeLogReportOptions) {
         subject: opts.school?.subject ?? 'IT405 – On-the-Job Training (OJT)',
     };
 
-    // One row per weekday, same as the web report
     const rows = buildWeeklyReportRows(filterLogsToWeek(opts.logs, weekStart), weekStart);
+    const { body, photoUrls } = buildBody(rows);
 
     const doc = new jsPDF({ unit: 'mm', format: 'a4' }) as jsPDF & { lastAutoTable?: { finalY: number } };
     const pageW = doc.internal.pageSize.getWidth();
     const pageH = doc.internal.pageSize.getHeight();
 
-    // Load every image first so the document can be built synchronously
     const [leftLogo, rightLogo, ...photos] = await Promise.all([
         loadPhoto(doc, logos?.left),
         loadPhoto(doc, logos?.right),
-        ...rows.map((r) => loadPhoto(doc, r.photoUrl, imageHeaders)),
+        ...photoUrls.map((url) => loadPhoto(doc, url, imageHeaders)),
     ]);
 
     function drawHeader() {
@@ -214,14 +396,7 @@ export async function exportTimeLogReportPdf(opts: TimeLogReportOptions) {
         }
         if (rightLogo) {
             const { w, h } = fit(rightLogo, logoBox, logoBox);
-            doc.addImage(
-                rightLogo.dataUri,
-                rightLogo.format,
-                pageW - MARGIN - 4 - w,
-                10 + (logoBox - h) / 2,
-                w,
-                h,
-            );
+            doc.addImage(rightLogo.dataUri, rightLogo.format, pageW - MARGIN - 4 - w, 10 + (logoBox - h) / 2, w, h);
         }
 
         const cx = pageW / 2;
@@ -238,7 +413,6 @@ export async function exportTimeLogReportPdf(opts: TimeLogReportOptions) {
         doc.line(MARGIN, 37, pageW - MARGIN, 37);
     }
 
-    // ── Page 1: header + student info ──
     drawHeader();
 
     doc.setFontSize(10).setTextColor(...INK).setFont('helvetica', 'normal');
@@ -253,17 +427,11 @@ export async function exportTimeLogReportPdf(opts: TimeLogReportOptions) {
     const weekText = weekNo ? String(weekNo) : formatWeekLabel(weekStart);
     doc.text(weekText, MARGIN + 4 + doc.getTextWidth(weekLabel + '  '), 54);
 
-    // ── Table ──
     autoTable(doc, {
         startY: 60,
         margin: { top: 44, left: MARGIN, right: MARGIN, bottom: 20 },
-        head: [['DATE', 'Accomplishments', 'No. of Hours', 'Attachments']],
-        body: rows.map((r) => [
-            format(r.date, 'MM/dd/yyyy'),
-            r.task_note,
-            `${r.hours}hrs`,
-            '',
-        ]),
+        head: [['DATE', 'Session', 'Accomplishments', 'No. of Hours', 'Attachments']],
+        body,
         theme: 'grid',
         styles: {
             font: 'helvetica',
@@ -276,27 +444,25 @@ export async function exportTimeLogReportPdf(opts: TimeLogReportOptions) {
         },
         headStyles: {
             fillColor: ORANGE,
-            textColor: [255, 255, 255],
+            textColor: WHITE,
             fontStyle: 'bold',
             halign: 'center',
             valign: 'middle',
         },
-        bodyStyles: { fillColor: PEACH },
-        alternateRowStyles: { fillColor: [255, 255, 255] },
         columnStyles: {
-            0: { cellWidth: 24, halign: 'center', fontStyle: 'bold' },
-            1: { cellWidth: 'auto', halign: 'left' },
-            2: { cellWidth: 22, halign: 'center', fontStyle: 'bold' },
-            3: { cellWidth: 50 },
+            0: { cellWidth: 22 },
+            1: { cellWidth: 26 },
+            2: { cellWidth: 'auto', halign: 'left' },
+            3: { cellWidth: 20 },
+            4: { cellWidth: 46 },
         },
         didParseCell: (d) => {
-            // Give rows with an attachment enough height for the photo
-            if (d.section === 'body' && d.column.index === 3 && photos[d.row.index]) {
+            if (d.section === 'body' && d.column.index === 4 && photos[d.row.index]) {
                 d.cell.styles.minCellHeight = PHOTO_ROW_HEIGHT;
             }
         },
         didDrawCell: (d) => {
-            if (d.section !== 'body' || d.column.index !== 3) return;
+            if (d.section !== 'body' || d.column.index !== 4) return;
             const p = photos[d.row.index];
             if (!p) return;
             const pad = 2;
@@ -318,29 +484,40 @@ export async function exportTimeLogReportPdf(opts: TimeLogReportOptions) {
     // ── Signatures ──
     let y = (doc.lastAutoTable?.finalY ?? 100) + 14;
 
-    if (verifiedBy || notedBy) {
+    if (supervisorBy || studentBy) {
         if (y + 36 > pageH - 10) {
             doc.addPage();
             drawHeader();
             y = 50;
         }
+
         const leftX = MARGIN + 8;
         const rightX = pageW - MARGIN - 62;
 
         doc.setTextColor(...INK).setFontSize(9).setFont('helvetica', 'normal');
-        if (verifiedBy) doc.text('Verified by:', leftX, y);
-        if (notedBy) doc.text('Noted by:', rightX, y);
+        if (supervisorBy) doc.text('Noted by:', leftX, y);
+        if (studentBy) doc.text('Prepared by:', rightX, y);
 
-        doc.setFont('helvetica', 'bold');
-        if (verifiedBy) doc.text(verifiedBy.name.toUpperCase(), leftX, y + 14);
-        if (notedBy) doc.text(notedBy.name.toUpperCase(), rightX, y + 14);
+        doc.setDrawColor(...MUTED).setLineWidth(0.4);
+        if (supervisorBy) doc.line(leftX, y + 18, leftX + 70, y + 18);
+        if (studentBy) doc.line(rightX, y + 18, rightX + 70, y + 18);
 
-        doc.setFontSize(8.5);
-        if (verifiedBy?.organization) doc.text(verifiedBy.organization.toUpperCase(), leftX, y + 24);
-        if (notedBy?.position) doc.text(notedBy.position.toUpperCase(), rightX, y + 24);
+        doc.setFont('helvetica', 'bold').setFontSize(9);
+        if (supervisorBy?.name) doc.text(supervisorBy.name.toUpperCase(), leftX, y + 14);
+        if (studentBy) doc.text(studentBy.name.toUpperCase(), rightX, y + 14);
+
+        doc.setFont('helvetica', 'normal').setFontSize(8.5);
+        let subY = y + 24;
+        if (supervisorBy?.title) {
+            doc.text(supervisorBy.title.toUpperCase(), leftX, subY);
+            subY += 4;
+        }
+        if (supervisorBy?.organization) {
+            doc.text(supervisorBy.organization.toUpperCase(), leftX, subY);
+        }
+        if (studentBy) doc.text('INTERN', rightX, y + 24);
     }
 
-    // No doc.save() in RN: export base64 and write it with blob-util
     const base64 = doc.output('datauristring').split(',')[1];
     const path = `${ReactNativeBlobUtil.fs.dirs.CacheDir}/${fileName}`;
     await ReactNativeBlobUtil.fs.writeFile(path, base64, 'base64');

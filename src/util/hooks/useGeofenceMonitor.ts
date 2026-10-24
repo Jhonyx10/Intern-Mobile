@@ -1,5 +1,5 @@
 // hooks/useGeofenceMonitor.ts
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import BackgroundGeolocation, {
     Location,
     AuthorizationStatus,
@@ -13,13 +13,22 @@ import { queryClient } from '../queryClient';
 import { startExcursion, addExcursionPoint, completeExcursion } from '../queries/excursions';
 
 const EXCURSION_ID_KEY = '@excursion_id';
+// Persisted so the headless task and cold-boot restores know the session state.
+const PUNCHED_IN_KEY = '@punched_in';
+const OUTSIDE_KEY = '@outside_geofence';
+const POLYGON_KEY = '@office_polygon';
+
 const HEARTBEAT_INTERVAL_SECONDS = 10;
 const OUTSIDE_TOO_LONG_MS = 3 * 60 * 1000; // 3 minutes
 // How long the intern must stay outside the polygon before we report the exit
 // and create the excursion. Filters out GPS jitter and quick step-outs.
-const EXIT_CONFIRM_DELAY_MS = 20 * 1000;
+const EXIT_CONFIRM_DELAY_MS = 10 * 1000;
 // Ignore fixes less accurate than this when deciding inside/outside.
 const MAX_ACCURACY_METERS = 50;
+// Record one excursion point per heartbeat (every 10s). Set slightly under the
+// heartbeat interval so timing jitter never skips a beat, while still blocking
+// the extra onLocation fix that arrives when the intern is moving.
+const EXCURSION_POINT_INTERVAL_MS = 9 * 1000;
 
 // Make the reason modal react immediately instead of waiting for the next poll.
 const refreshPendingExcursions = () => {
@@ -28,6 +37,7 @@ const refreshPendingExcursions = () => {
 
 // Module-level state. These hooks are each meant to be instantiated once
 // (root listener + root controls), so plain module variables are fine.
+// They are ALSO used by the headless task (same JS module, same variables).
 let activeExcursionId: string | number | null = null;
 let isInsideGeofence = true; // assume inside until a location fix says otherwise
 let isPunchedIn = false; // gates whether anything is reported
@@ -39,6 +49,68 @@ let isOnBreak = false; // true between break_out and break_in: no excursions, no
 // that decides inside/outside. No radius is used anywhere.
 let officePolygon: number[][] | null = null;
 let lastCoords: { latitude: number; longitude: number } | null = null;
+// Timestamp of the last recorded excursion point, used to throttle recording.
+let lastExcursionPointAt = 0;
+// Promoted from useRef so they survive component remounts (e.g. navigation).
+let isRegistered = false;
+let isStarting = false;
+// Prevents restorePersistedState from running more than once per JS runtime.
+let stateRestored = false;
+
+// ─── AsyncStorage persistence ────────────────────────────────────────────────
+
+/**
+ * Restores isPunchedIn, isInsideGeofence, officePolygon, and activeExcursionId
+ * from AsyncStorage. Called on every BGGeo ready() and from the headless task
+ * so that module-level state survives app kills.
+ */
+export async function restorePersistedState(): Promise<void> {
+    if (stateRestored) return;
+    stateRestored = true;
+
+    try {
+        const [punchedIn, outside, polygonJson, excursionId] = await Promise.all([
+            AsyncStorage.getItem(PUNCHED_IN_KEY),
+            AsyncStorage.getItem(OUTSIDE_KEY),
+            AsyncStorage.getItem(POLYGON_KEY),
+            AsyncStorage.getItem(EXCURSION_ID_KEY),
+        ]);
+
+        if (punchedIn === 'true') {
+            isPunchedIn = true;
+        }
+        if (outside === 'true') {
+            isInsideGeofence = false;
+            exitReported = true; // the exit was already sent before the kill
+        }
+        if (polygonJson) {
+            try {
+                const parsed = JSON.parse(polygonJson);
+                if (Array.isArray(parsed) && parsed.length >= 3) {
+                    officePolygon = parsed;
+                }
+            } catch { /* ignore corrupt data */ }
+        }
+        if (excursionId) {
+            activeExcursionId = excursionId;
+        }
+
+        if (!isInsideGeofence && isPunchedIn) {
+            startOutsideTimer();
+        }
+    } catch (e) {
+        console.error('[geofence] Failed to restore persisted state:', e);
+    }
+}
+
+function persistPunchedIn(value: boolean) {
+    AsyncStorage.setItem(PUNCHED_IN_KEY, value ? 'true' : 'false').catch(() => { });
+}
+
+function persistOutside(value: boolean) {
+    // value=true means outside; false means inside
+    AsyncStorage.setItem(OUTSIDE_KEY, value ? 'true' : 'false').catch(() => { });
+}
 
 // ─── Notifee helpers ────────────────────────────────────────────────────────
 
@@ -138,6 +210,19 @@ async function reportConfirmedExit(exitedAtIso: string) {
         if (excursion?.id) {
             activeExcursionId = excursion.id;
             await AsyncStorage.setItem(EXCURSION_ID_KEY, excursion.id.toString());
+
+            // Record the first point right away so the map always has the
+            // location where the intern was when the excursion was created.
+            if (lastCoords) {
+                lastExcursionPointAt = Date.now();
+                addExcursionPoint(
+                    excursion.id,
+                    lastCoords.latitude,
+                    lastCoords.longitude,
+                ).catch((e) =>
+                    console.error('Failed to record first excursion point:', e),
+                );
+            }
         }
     } catch (e) {
         console.error('Failed to start excursion:', e);
@@ -166,6 +251,7 @@ function scheduleExitReport() {
 function handleExit() {
     console.log('[geofence] exit detected');
     isInsideGeofence = false;
+    persistOutside(true);
 
     if (isPunchedIn && !isOnBreak) {
         scheduleExitReport();
@@ -180,6 +266,7 @@ function handleExit() {
 async function handleEnter() {
     console.log('[geofence] enter detected');
     isInsideGeofence = true;
+    persistOutside(false);
     clearOutsideTimer(); // intern returned in time — cancel the alert
 
     // Back before the exit was confirmed: it was a brief blip.
@@ -189,6 +276,7 @@ async function handleEnter() {
         return;
     }
     exitReported = false;
+    lastExcursionPointAt = 0; // next excursion starts its own point cadence
 
     try {
         await api.post('/intern/time/geofence-event', {
@@ -220,7 +308,14 @@ async function handleEnter() {
  * or null if there isn't one. Without a polygon, no excursions are tracked.
  */
 export function setGeofencePolygon(polygon: number[][] | null | undefined) {
-    officePolygon = polygon && polygon.length >= 3 ? polygon : null;
+    const valid = polygon && polygon.length >= 3 ? polygon : null;
+    officePolygon = valid;
+    // Persist so the headless task can do polygon checks after an app kill.
+    if (valid) {
+        AsyncStorage.setItem(POLYGON_KEY, JSON.stringify(valid)).catch(() => { });
+    } else {
+        AsyncStorage.removeItem(POLYGON_KEY).catch(() => { });
+    }
 }
 
 /**
@@ -240,7 +335,8 @@ export function setGeofenceOnBreak(onBreak: boolean) {
         const openId = activeExcursionId;
         activeExcursionId = null;
         exitReported = false;
-        AsyncStorage.removeItem(EXCURSION_ID_KEY).catch(() => {});
+        lastExcursionPointAt = 0;
+        AsyncStorage.removeItem(EXCURSION_ID_KEY).catch(() => { });
         if (openId !== null) {
             completeExcursion(openId)
                 .catch((e) =>
@@ -301,8 +397,18 @@ const reportLiveLocation = async (location: Location) => {
     }
 };
 
+/**
+ * Records one point per EXCURSION_POINT_INTERVAL_MS while an excursion is open.
+ * Called from both the heartbeat and onLocation (and their headless
+ * equivalents); the throttle keeps them from double-recording.
+ */
 const recordExcursionPointIfOutside = async (location: Location) => {
     if (isInsideGeofence || activeExcursionId === null) return;
+
+    const now = Date.now();
+    if (now - lastExcursionPointAt < EXCURSION_POINT_INTERVAL_MS) return;
+    lastExcursionPointAt = now; // set before the await so parallel calls can't double-fire
+
     try {
         await addExcursionPoint(
             activeExcursionId,
@@ -313,6 +419,29 @@ const recordExcursionPointIfOutside = async (location: Location) => {
         console.error('Failed to record excursion point:', e);
     }
 };
+
+/**
+ * Handles a single BGGeo event in the headless JS context (app killed on Android).
+ * Must be called from the task registered via BackgroundGeolocation.registerHeadlessTask().
+ * It restores persisted state on first call, then processes the event normally.
+ */
+export async function handleHeadlessEvent(event: { name: string; params: any }) {
+    console.log('[geofence:headless] event:', event.name);
+
+    // Restore state from AsyncStorage on first headless event (module vars are fresh).
+    await restorePersistedState();
+
+    const { name, params } = event;
+
+    if (name === 'location' || name === 'heartbeat') {
+        const location: Location = name === 'heartbeat' ? params.location : params;
+        checkPolygonTransition(location);
+        await reportLiveLocation(location);
+        await recordExcursionPointIfOutside(location);
+    }
+    // 'terminate' fires when the app is killed while BGGeo is running —
+    // native engine will restart it; nothing to do in JS.
+}
 
 /**
  * Call this ONCE, at the app root — configures the native engine and
@@ -327,10 +456,11 @@ export function useGeoFenceListeners() {
         const onHeartbeat = ({ location }: { location: Location }) => {
             checkPolygonTransition(location);
             reportLiveLocation(location);
+            recordExcursionPointIfOutside(location);
         };
 
-        // Fires on movement — detects polygon transitions and builds the
-        // excursion trail while outside.
+        // Fires on movement — detects polygon transitions and adds to the
+        // excursion trail while outside (throttled with the heartbeat).
         const onLocation = (location: Location) => {
             checkPolygonTransition(location);
             recordExcursionPointIfOutside(location);
@@ -361,16 +491,9 @@ export function useGeoFenceListeners() {
                 text: 'Your location is being monitored while you are punched in.',
             },
         } as any).then(async () => {
-            // Resume an in-progress excursion across app restarts.
-            const storedId = await AsyncStorage.getItem(EXCURSION_ID_KEY);
-            if (storedId) {
-                activeExcursionId = storedId;
-                isInsideGeofence = false;
-                exitReported = true; // the excursion already exists on the server
-                if (isPunchedIn) {
-                    startOutsideTimer();
-                }
-            }
+            // Restore persisted state (isPunchedIn, isInsideGeofence, officePolygon,
+            // activeExcursionId) so the session survives app kills and cold boots.
+            await restorePersistedState();
         });
 
         return () => {
@@ -385,39 +508,48 @@ export function useGeoFenceListeners() {
  * geofence). Inside/outside comes from the polygon set via setGeofencePolygon.
  */
 export function useGeofenceControls() {
-    const isRegistered = useRef(false);
-    const isStarting = useRef(false);
-
     const startMonitoring = async () => {
-        if (isRegistered.current || isStarting.current) return; // already running or starting
-        isStarting.current = true;
+        if (isRegistered || isStarting) return; // already running or starting
+        isStarting = true;
         try {
             const status = await BackgroundGeolocation.requestPermission();
             if (status === AuthorizationStatus.Denied) {
                 console.error('Location permission denied — cannot start monitoring.');
+                isStarting = false;
                 return;
             }
-            await BackgroundGeolocation.start();
+            // Set isPunchedIn BEFORE the async start so that any location events
+            // fired by the already-configured native engine during startup are
+            // processed rather than silently dropped by checkPolygonTransition.
             isPunchedIn = true;
-            isRegistered.current = true;
+            persistPunchedIn(true);
+            await BackgroundGeolocation.start();
+            isRegistered = true;
             console.log('[geofence] monitoring started, polygon:', Boolean(officePolygon));
         } catch (e) {
+            isPunchedIn = false; // roll back on failure
+            persistPunchedIn(false);
             console.error('Failed to start monitoring:', e);
         } finally {
-            isStarting.current = false;
+            isStarting = false;
         }
     };
 
     const stopMonitoring = async () => {
-        if (!isRegistered.current) return;
+        if (!isRegistered) return;
         try {
             await BackgroundGeolocation.stop();
             isPunchedIn = false;
+            persistPunchedIn(false);
+            persistOutside(false);
             clearOutsideTimer(); // always cancel the alert when punching out
             clearExitConfirmTimer(); // punched out before the exit was confirmed: no excursion
             exitReported = false;
+            lastExcursionPointAt = 0;
             isInsideGeofence = true; // fresh start for the next shift
-            isRegistered.current = false;
+            isRegistered = false;
+            // Clear the restore flag so next punch-in starts fresh.
+            stateRestored = false;
         } catch (e) {
             console.error('Failed to stop monitoring:', e);
         }

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -12,6 +12,11 @@ import Animated, {
   FadeInDown,
   FadeInUp,
   LinearTransition,
+  useSharedValue,
+  useAnimatedStyle,
+  withRepeat,
+  withSequence,
+  withTiming,
 } from 'react-native-reanimated';
 import LinearGradient from 'react-native-linear-gradient';
 import {
@@ -21,7 +26,7 @@ import {
   X,
   File,
   AlertCircle,
-  CalendarClock,
+  Clock,
 } from 'lucide-react-native';
 import { pick, types } from '@react-native-documents/picker';
 import Pdf from 'react-native-pdf';
@@ -32,6 +37,7 @@ import {
   downloadDocumentFile,
 } from '../util/queries/documents';
 import { useToast } from '../components/ToastProvider';
+import { PAGE_BG, LINE, INK, MUTED, Panel } from '../components/ScreenKit';
 
 function withAlpha(hex: string, alpha: string) {
   return `${hex}${alpha}`;
@@ -39,6 +45,7 @@ function withAlpha(hex: string, alpha: string) {
 
 export type DocStatus = 'pending' | 'uploaded' | 'approved' | 'rejected';
 export type Recurrence = 'none' | 'daily' | 'weekly';
+export type DueState = 'rejected' | 'due_today' | 'upcoming' | 'required';
 
 export type DocumentHistoryEntry = {
   period_start: string;
@@ -57,6 +64,9 @@ export type DocumentItem = {
   history?: DocumentHistoryEntry[];
   rejection_reason?: string | null;
   can_upload?: boolean;
+  needs_action?: boolean;
+  due_state?: DueState | null;
+  due_date?: string | null;
 };
 
 type SelectedDoc = {
@@ -83,46 +93,209 @@ type Submission = {
   isCurrent: boolean;
 };
 
+const STATUS_META: Record<DocStatus, { color: string; label: string }> = {
+  pending: { color: MUTED, label: 'Required' },
+  uploaded: { color: '#D97706', label: 'Under review' },
+  approved: { color: '#059669', label: 'Approved' },
+  rejected: { color: '#DC2626', label: 'Rejected' },
+};
+
+const ACTION_META: Record<
+  DueState,
+  { color: string; bg: string; border: string; label: string }
+> = {
+  rejected: {
+    color: '#DC2626',
+    bg: '#FEF2F2',
+    border: '#FECACA',
+    label: 'Rejected · Re-upload',
+  },
+  due_today: {
+    color: '#EA580C',
+    bg: '#FFF7ED',
+    border: '#FED7AA',
+    label: 'Due today',
+  },
+  upcoming: {
+    color: '#D97706',
+    bg: '#FFFBEB',
+    border: '#FDE68A',
+    label: 'Due Friday',
+  },
+  required: {
+    color: '#D97706',
+    bg: '#FFFBEB',
+    border: '#FDE68A',
+    label: 'Required',
+  },
+};
+
+// Returns null when nothing is needed from the intern.
+// Uses the server's due_state, with a local fallback for older API responses.
+export function getActionMeta(doc: DocumentItem) {
+  const needs =
+    doc.needs_action ?? (doc.status === 'pending' || doc.status === 'rejected');
+  if (!needs) return null;
+
+  let state: DueState | null | undefined = doc.due_state;
+  if (!state) {
+    if (doc.status === 'rejected') state = 'rejected';
+    else if (doc.recurrence === 'daily') state = 'due_today';
+    else if (doc.recurrence === 'weekly')
+      state = new Date().getDay() === 5 ? 'due_today' : 'upcoming';
+    else state = 'required';
+  }
+  return { state, ...ACTION_META[state] };
+}
+
+// Shared by the tab bar / Home so the count is always consistent
+export const usePendingDocsCount = () => {
+  const { data } = useDocuments();
+  return ((data as DocumentItem[]) ?? []).filter(d => getActionMeta(d)).length;
+};
+
+// Coloured dot + text, same pattern as the status on Home and Reports
 function StatusBadge({ status }: { status: DocStatus }) {
-  const badges = {
-    pending: { bg: '#F1F5F9', text: '#64748B', label: 'Required' },
-    uploaded: { bg: '#FEF3C7', text: '#D97706', label: 'Under Review' },
-    approved: { bg: '#DCFCE7', text: '#16A34A', label: 'Approved' },
-    rejected: { bg: '#FEE2E2', text: '#DC2626', label: 'Rejected' },
-  };
-  const { bg, text, label } = badges[status];
+  const { color, label } = STATUS_META[status];
 
   return (
-    <View
-      style={{ backgroundColor: bg }}
-      className="px-2.5 py-1 rounded-full flex-row items-center"
-    >
-      {status === 'approved' && (
-        <CheckCircle2 color={text} size={12} className="mr-1" />
-      )}
-      {status === 'rejected' && (
-        <AlertCircle color={text} size={12} className="mr-1" />
-      )}
-      <Text
-        style={{ color: text }}
-        className="text-[10px] font-bold uppercase tracking-wider"
-      >
+    <View className="flex-row items-center">
+      <View
+        className="rounded-full mr-1.5"
+        style={{ width: 7, height: 7, backgroundColor: color }}
+      />
+      <Text className="text-[12px] font-medium" style={{ color }}>
         {label}
       </Text>
     </View>
   );
 }
 
+function PulseDot({ color }: { color: string }) {
+  const opacity = useSharedValue(1);
+
+  useEffect(() => {
+    opacity.value = withRepeat(
+      withSequence(
+        withTiming(0.25, { duration: 700 }),
+        withTiming(1, { duration: 700 }),
+      ),
+      -1,
+      false,
+    );
+  }, [opacity]);
+
+  const style = useAnimatedStyle(() => ({ opacity: opacity.value }));
+
+  return (
+    <Animated.View
+      style={[
+        { width: 8, height: 8, borderRadius: 4, backgroundColor: color },
+        style,
+      ]}
+    />
+  );
+}
+
+function ActionPill({ doc }: { doc: DocumentItem }) {
+  const meta = getActionMeta(doc);
+  if (!meta) return null;
+
+  return (
+    <View
+      className="flex-row items-center self-start px-2.5 py-1 rounded-full mt-2"
+      style={{
+        backgroundColor: meta.bg,
+        borderWidth: 1,
+        borderColor: meta.border,
+      }}
+    >
+      {meta.state === 'due_today' || meta.state === 'rejected' ? (
+        <PulseDot color={meta.color} />
+      ) : (
+        <Clock color={meta.color} size={11} strokeWidth={2.5} />
+      )}
+      <Text
+        className="ml-1.5 text-[11px] font-semibold"
+        style={{ color: meta.color }}
+      >
+        {meta.label}
+      </Text>
+    </View>
+  );
+}
+
+function ActionBanner({ docs }: { docs: DocumentItem[] }) {
+  const todo = docs.filter(d => getActionMeta(d));
+  if (todo.length === 0) return null;
+
+  const rejected = todo.filter(d => d.status === 'rejected').length;
+  const dueToday = todo.filter(
+    d => getActionMeta(d)?.state === 'due_today',
+  ).length;
+  const urgent = rejected > 0 || dueToday > 0;
+  const color = urgent ? '#DC2626' : '#D97706';
+
+  const parts: string[] = [];
+  if (dueToday) parts.push(`${dueToday} due today`);
+  if (rejected) parts.push(`${rejected} rejected`);
+
+  return (
+    <Animated.View
+      entering={FadeInUp.duration(400).springify()}
+      className="mb-3"
+    >
+      <View
+        className="flex-row items-center rounded-2xl px-4 py-3.5"
+        style={{
+          backgroundColor: urgent ? '#FEF2F2' : '#FFFBEB',
+          borderWidth: 1,
+          borderColor: urgent ? '#FECACA' : '#FDE68A',
+        }}
+      >
+        <View
+          className="h-9 w-9 rounded-full items-center justify-center mr-3"
+          style={{ backgroundColor: color + '20' }}
+        >
+          <AlertCircle color={color} size={20} />
+        </View>
+        <View className="flex-1">
+          <Text className="text-[14px] font-bold" style={{ color }}>
+            {todo.length}{' '}
+            {todo.length === 1 ? 'document needs' : 'documents need'} your
+            attention
+          </Text>
+          <Text className="text-[12px] mt-0.5" style={{ color }}>
+            {parts.length
+              ? parts.join(' · ')
+              : 'Submit them before the deadline'}
+          </Text>
+        </View>
+      </View>
+    </Animated.View>
+  );
+}
+
 function RejectionNote({ reason }: { reason?: string | null }) {
   return (
-    <View className="mt-3 rounded-2xl bg-red-50 border border-red-100 px-3.5 py-3">
+    <View
+      className="mt-3 rounded-xl px-3.5 py-3"
+      style={{
+        backgroundColor: '#FEF2F2',
+        borderWidth: 1,
+        borderColor: '#FECACA',
+      }}
+    >
       <View className="flex-row items-center mb-1">
-        <AlertCircle color="#DC2626" size={13} />
-        <Text className="ml-1.5 text-[11px] font-bold uppercase tracking-wider text-red-600">
+        <AlertCircle color="#DC2626" size={14} />
+        <Text
+          className="ml-1.5 text-[12px] font-semibold"
+          style={{ color: '#B91C1C' }}
+        >
           Reason for rejection
         </Text>
       </View>
-      <Text className="text-[12px] leading-5 text-red-700">
+      <Text className="text-[13px] leading-5" style={{ color: '#B91C1C' }}>
         {reason?.trim() ||
           'No reason was provided. Please contact your coordinator.'}
       </Text>
@@ -178,6 +351,10 @@ function buildSubmissions(doc: DocumentItem): Submission[] {
   return list;
 }
 
+// Documents that still need action float to the top
+const urgencyFirst = (a: DocumentItem, b: DocumentItem) =>
+  Number(!!getActionMeta(b)) - Number(!!getActionMeta(a));
+
 export const Documents = () => {
   const { data: userData } = useUser();
   const themeColor = userData?.settings?.theme_color || '#1D4ED8';
@@ -189,10 +366,12 @@ export const Documents = () => {
   // card with a "current period" upload slot and a Files button that opens
   // every file submitted so far. Everything else is a normal one-shot
   // requirement.
-  const recurringDocs = allDocs.filter(
-    d => d.recurrence && d.recurrence !== 'none',
-  );
-  const docs = allDocs.filter(d => !d.recurrence || d.recurrence === 'none');
+  const recurringDocs = allDocs
+    .filter(d => d.recurrence && d.recurrence !== 'none')
+    .sort(urgencyFirst);
+  const docs = allDocs
+    .filter(d => !d.recurrence || d.recurrence === 'none')
+    .sort(urgencyFirst);
 
   const [selectedDoc, setSelectedDoc] = useState<SelectedDoc | null>(null);
   const [localPdfPath, setLocalPdfPath] = useState<string | null>(null);
@@ -341,34 +520,74 @@ export const Documents = () => {
     });
   };
 
+  // ── Shared buttons ──────────────────────────────────────────
+  const UploadingIndicator = () => (
+    <View
+      className="px-5 py-2.5 rounded-xl"
+      style={{ backgroundColor: withAlpha(themeColor, '15') }}
+    >
+      <ActivityIndicator size="small" color={themeColor} />
+    </View>
+  );
+
   return (
     <>
       <ScrollView
-        style={{ flex: 1, backgroundColor: '#F8FAFC' }}
+        style={{ flex: 1, backgroundColor: PAGE_BG }}
         contentContainerStyle={{ paddingBottom: 110 }}
         showsVerticalScrollIndicator={false}
       >
+        {/* Header: same gradient as the other screens */}
         <Animated.View entering={FadeInDown.duration(400)}>
           <LinearGradient
             colors={[themeColor, withAlpha(themeColor, 'CC')]}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
             style={{
-              paddingTop: 52,
-              paddingBottom: 56,
-              paddingHorizontal: 24,
-              borderBottomLeftRadius: 36,
-              borderBottomRightRadius: 36,
+              paddingTop: 56,
+              paddingBottom: 84,
+              paddingHorizontal: 20,
+              borderBottomLeftRadius: 32,
+              borderBottomRightRadius: 32,
             }}
           >
-            <Text className="text-white text-[22px] font-bold">Documents</Text>
-            <Text className="text-white/60 text-[13px] mt-1">
+            <Text className="text-[26px] font-bold text-white">Documents</Text>
+            <Text
+              className="text-[13px] mt-1.5"
+              style={{ color: 'rgba(255,255,255,0.8)' }}
+            >
               Manage and upload your required files
             </Text>
           </LinearGradient>
         </Animated.View>
 
-        <View className="px-5" style={{ marginTop: -28 }}>
+        <View className="px-5" style={{ marginTop: -56 }}>
+          <ActionBanner docs={allDocs} />
+
+          {allDocs.length === 0 && (
+            <Animated.View
+              entering={FadeInUp.duration(500).delay(200).springify()}
+            >
+              <Panel>
+                <View className="items-center px-6 py-10">
+                  <FileText color="#CBD5E1" size={36} />
+                  <Text
+                    className="text-[14px] font-semibold mt-3"
+                    style={{ color: INK }}
+                  >
+                    No required documents yet
+                  </Text>
+                  <Text
+                    className="text-[13px] mt-1 text-center"
+                    style={{ color: MUTED }}
+                  >
+                    Documents your coordinator requires will show up here.
+                  </Text>
+                </View>
+              </Panel>
+            </Animated.View>
+          )}
+
           {recurringDocs.map((doc, index) => {
             const submissions = buildSubmissions(doc);
 
@@ -379,65 +598,52 @@ export const Documents = () => {
                   .delay(index * 100 + 100)
                   .springify()}
                 layout={LinearTransition.duration(200)}
-                className="rounded-3xl bg-white mb-4 overflow-hidden border border-slate-100 shadow-sm"
-                style={{
-                  shadowColor: '#0F172A',
-                  shadowOpacity: 0.04,
-                  shadowRadius: 10,
-                  shadowOffset: { width: 0, height: 4 },
-                  elevation: 2,
-                }}
+                className="mb-3"
               >
-                <View className="p-5 flex-row items-center">
-                  <View
-                    className="rounded-2xl p-3 mr-4"
-                    style={{
-                      backgroundColor: withAlpha(
-                        doc.status === 'approved' ? '#16A34A' : themeColor,
-                        '12',
-                      ),
-                    }}
-                  >
-                    <CalendarClock
-                      color={doc.status === 'approved' ? '#16A34A' : themeColor}
-                      size={26}
-                      strokeWidth={1.5}
-                    />
-                  </View>
-                  <View className="flex-1">
-                    <Text className="text-[15px] font-bold text-slate-800 mb-1">
-                      {doc.title}
-                    </Text>
-                    <View className="flex-row items-center flex-wrap">
-                      <StatusBadge status={doc.status} />
-                      {doc.period_start && (
-                        <Text className="ml-2 text-[11px] text-slate-400 font-medium">
-                          {formatPeriodLabel(doc.period_start, doc.recurrence)}
-                        </Text>
-                      )}
-                    </View>
-                  </View>
-
-                  <View className="ml-3">
-                    {isUploading === doc.id ? (
-                      <View
-                        className="px-5 py-2.5 rounded-xl"
-                        style={{ backgroundColor: withAlpha(themeColor, '15') }}
+                <Panel>
+                  <View className="p-4 flex-row items-center">
+                    <View className="flex-1 pr-3">
+                      <Text
+                        className="text-[15px] font-semibold"
+                        style={{ color: INK }}
                       >
-                        <ActivityIndicator size="small" color={themeColor} />
+                        {doc.title}
+                      </Text>
+                      <View className="flex-row items-center flex-wrap mt-1.5">
+                        <StatusBadge status={doc.status} />
+                        {doc.period_start && (
+                          <Text
+                            className="ml-3 text-[12px]"
+                            style={{ color: MUTED }}
+                          >
+                            {formatPeriodLabel(
+                              doc.period_start,
+                              doc.recurrence,
+                            )}
+                          </Text>
+                        )}
                       </View>
+                      <ActionPill doc={doc} />
+                    </View>
+
+                    {isUploading === doc.id ? (
+                      <UploadingIndicator />
                     ) : (
                       <Pressable
                         onPress={() => handleUpload(doc.id)}
                         disabled={doc.can_upload === false}
-                        className="flex-row items-center px-4 py-2.5 rounded-xl shadow-sm"
+                        className="flex-row items-center px-4 py-2.5 rounded-xl"
                         style={{
                           backgroundColor:
                             doc.can_upload === false ? '#CBD5E1' : themeColor,
                         }}
                       >
-                        <UploadCloud color="#fff" size={16} strokeWidth={2.5} />
-                        <Text className="ml-1.5 text-white font-bold text-[12px]">
+                        <UploadCloud
+                          color="#fff"
+                          size={16}
+                          strokeWidth={2.25}
+                        />
+                        <Text className="ml-1.5 text-white font-semibold text-[13px]">
                           {doc.can_upload === false
                             ? 'Fridays only'
                             : doc.status === 'rejected'
@@ -447,27 +653,30 @@ export const Documents = () => {
                       </Pressable>
                     )}
                   </View>
-                </View>
 
-                {/* Submitted files summary + button that opens the full list */}
-                <View className="px-5 py-3 border-t border-slate-100 flex-row items-center justify-between">
-                  <Text className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                    Submitted files ({submissions.length})
-                  </Text>
-                  <Pressable
-                    onPress={() => setFilesDocId(doc.id)}
-                    className="flex-row items-center px-3.5 py-2 rounded-xl border"
-                    style={{ borderColor: themeColor }}
+                  {/* Submitted files summary + button that opens the full list */}
+                  <View
+                    className="px-4 py-3 flex-row items-center justify-between"
+                    style={{ borderTopWidth: 1, borderTopColor: LINE }}
                   >
-                    <FileText color={themeColor} size={13} strokeWidth={2} />
-                    <Text
-                      className="ml-1.5 font-bold text-[11px]"
-                      style={{ color: themeColor }}
-                    >
-                      Files
+                    <Text className="text-[13px]" style={{ color: MUTED }}>
+                      Submitted files ({submissions.length})
                     </Text>
-                  </Pressable>
-                </View>
+                    <Pressable
+                      onPress={() => setFilesDocId(doc.id)}
+                      className="flex-row items-center px-3.5 py-2 rounded-xl"
+                      style={{ borderWidth: 1, borderColor: themeColor }}
+                    >
+                      <FileText color={themeColor} size={14} strokeWidth={2} />
+                      <Text
+                        className="ml-1.5 font-semibold text-[12px]"
+                        style={{ color: themeColor }}
+                      >
+                        View files
+                      </Text>
+                    </Pressable>
+                  </View>
+                </Panel>
               </Animated.View>
             );
           })}
@@ -479,142 +688,126 @@ export const Documents = () => {
               <Animated.View
                 key={doc.id}
                 entering={FadeInUp.duration(500)
-                  .delay(index * 100 + 200)
+                  .delay((recurringDocs.length + index) * 100 + 200)
                   .springify()}
-                className="rounded-3xl bg-white mb-4 p-5 border border-slate-100 shadow-sm"
-                style={{
-                  shadowColor: '#0F172A',
-                  shadowOpacity: 0.04,
-                  shadowRadius: 10,
-                  shadowOffset: { width: 0, height: 4 },
-                  elevation: 2,
-                }}
+                className="mb-3"
               >
-                <View className="flex-row items-center">
-                  <View
-                    className="rounded-2xl p-3 mr-4"
-                    style={{
-                      backgroundColor: withAlpha(
-                        doc.status === 'approved' ? '#16A34A' : themeColor,
-                        '12',
-                      ),
-                    }}
-                  >
-                    <FileText
-                      color={doc.status === 'approved' ? '#16A34A' : themeColor}
-                      size={26}
-                      strokeWidth={1.5}
-                    />
-                  </View>
-                  <View className="flex-1">
-                    <Text className="text-[15px] font-bold text-slate-800 mb-1">
-                      {doc.title}
-                    </Text>
+                <Panel>
+                  <View className="p-4">
                     <View className="flex-row items-center">
-                      <StatusBadge status={doc.status} />
-                    </View>
-                  </View>
-
-                  {/* Right-side action. Rejected cards use the action row below. */}
-                  {!isRejected && (
-                    <View className="ml-3">
-                      {isUploading === doc.id ? (
-                        <View
-                          className="px-5 py-2.5 rounded-xl"
-                          style={{
-                            backgroundColor: withAlpha(themeColor, '15'),
-                          }}
-                        >
-                          <ActivityIndicator size="small" color={themeColor} />
-                        </View>
-                      ) : doc.status === 'pending' ? (
-                        <Pressable
-                          onPress={() => handleUpload(doc.id)}
-                          className="flex-row items-center px-4 py-2.5 rounded-xl border shadow-sm"
-                          style={{
-                            borderColor: themeColor,
-                            backgroundColor: withAlpha(themeColor, '05'),
-                          }}
-                        >
-                          <UploadCloud
-                            color={themeColor}
-                            size={16}
-                            strokeWidth={2.5}
-                          />
-                          <Text
-                            className="ml-1.5 font-bold text-[12px]"
-                            style={{ color: themeColor }}
-                          >
-                            Upload
-                          </Text>
-                        </Pressable>
-                      ) : (
-                        <Pressable
-                          onPress={() => handleViewDoc(doc)}
-                          className="flex-row items-center px-4 py-2.5 rounded-xl shadow-sm"
-                          style={{ backgroundColor: themeColor }}
-                        >
-                          <File color="#fff" size={15} strokeWidth={2} />
-                          <Text className="ml-1.5 text-white font-bold text-[12px]">
-                            View
-                          </Text>
-                        </Pressable>
-                      )}
-                    </View>
-                  )}
-                </View>
-
-                {isRejected && (
-                  <>
-                    <RejectionNote reason={doc.rejection_reason} />
-                    <View className="flex-row mt-3 gap-2">
-                      <Pressable
-                        onPress={() =>
-                          handleViewDoc(doc, {
-                            rejected: true,
-                            reason: doc.rejection_reason,
-                          })
-                        }
-                        className="flex-1 flex-row items-center justify-center py-2.5 rounded-xl border"
-                        style={{ borderColor: themeColor }}
-                      >
-                        <File color={themeColor} size={15} strokeWidth={2} />
+                      <View className="flex-1 pr-3">
                         <Text
-                          className="ml-1.5 font-bold text-[12px]"
-                          style={{ color: themeColor }}
+                          className="text-[15px] font-semibold"
+                          style={{ color: INK }}
                         >
-                          View
+                          {doc.title}
                         </Text>
-                      </Pressable>
-
-                      {isUploading === doc.id ? (
-                        <View
-                          className="flex-1 items-center justify-center py-2.5 rounded-xl"
-                          style={{
-                            backgroundColor: withAlpha(themeColor, '15'),
-                          }}
-                        >
-                          <ActivityIndicator size="small" color={themeColor} />
+                        <View className="flex-row items-center mt-1.5">
+                          <StatusBadge status={doc.status} />
                         </View>
-                      ) : (
-                        <Pressable
-                          onPress={() => handleUpload(doc.id)}
-                          className="flex-1 flex-row items-center justify-center py-2.5 rounded-xl"
-                          style={{ backgroundColor: themeColor }}
-                        >
-                          <UploadCloud
-                            color="#fff"
-                            size={15}
-                            strokeWidth={2.5}
-                          />
-                          <Text className="ml-1.5 text-white font-bold text-[12px]">
-                            Re-upload
-                          </Text>
-                        </Pressable>
-                      )}
+                        <ActionPill doc={doc} />
+                      </View>
+
+                      {/* Right-side action. Rejected cards use the action row below. */}
+                      {!isRejected &&
+                        (isUploading === doc.id ? (
+                          <UploadingIndicator />
+                        ) : doc.status === 'pending' ? (
+                          <Pressable
+                            onPress={() => handleUpload(doc.id)}
+                            className="flex-row items-center px-4 py-2.5 rounded-xl"
+                            style={{ backgroundColor: themeColor }}
+                          >
+                            <UploadCloud
+                              color="#fff"
+                              size={16}
+                              strokeWidth={2.25}
+                            />
+                            <Text className="ml-1.5 text-white font-semibold text-[13px]">
+                              Upload
+                            </Text>
+                          </Pressable>
+                        ) : (
+                          <Pressable
+                            onPress={() => handleViewDoc(doc)}
+                            className="flex-row items-center px-4 py-2.5 rounded-xl"
+                            style={{ borderWidth: 1, borderColor: themeColor }}
+                          >
+                            <File
+                              color={themeColor}
+                              size={15}
+                              strokeWidth={2}
+                            />
+                            <Text
+                              className="ml-1.5 font-semibold text-[13px]"
+                              style={{ color: themeColor }}
+                            >
+                              View
+                            </Text>
+                          </Pressable>
+                        ))}
                     </View>
-                  </>
-                )}
+
+                    {isRejected && (
+                      <>
+                        <RejectionNote reason={doc.rejection_reason} />
+                        <View className="flex-row mt-3 gap-2">
+                          <Pressable
+                            onPress={() =>
+                              handleViewDoc(doc, {
+                                rejected: true,
+                                reason: doc.rejection_reason,
+                              })
+                            }
+                            className="flex-1 flex-row items-center justify-center py-2.5 rounded-xl"
+                            style={{ borderWidth: 1, borderColor: themeColor }}
+                          >
+                            <File
+                              color={themeColor}
+                              size={15}
+                              strokeWidth={2}
+                            />
+                            <Text
+                              className="ml-1.5 font-semibold text-[13px]"
+                              style={{ color: themeColor }}
+                            >
+                              View
+                            </Text>
+                          </Pressable>
+
+                          {isUploading === doc.id ? (
+                            <View
+                              className="flex-1 items-center justify-center py-2.5 rounded-xl"
+                              style={{
+                                backgroundColor: withAlpha(themeColor, '15'),
+                              }}
+                            >
+                              <ActivityIndicator
+                                size="small"
+                                color={themeColor}
+                              />
+                            </View>
+                          ) : (
+                            <Pressable
+                              onPress={() => handleUpload(doc.id)}
+                              className="flex-1 flex-row items-center justify-center py-2.5 rounded-xl"
+                              style={{ backgroundColor: themeColor }}
+                            >
+                              <UploadCloud
+                                color="#fff"
+                                size={15}
+                                strokeWidth={2.25}
+                              />
+                              <Text className="ml-1.5 text-white font-semibold text-[13px]">
+                                Re-upload
+                              </Text>
+                            </Pressable>
+                          )}
+                        </View>
+                      </>
+                    )}
+                  </View>
+                </Panel>
               </Animated.View>
             );
           })}
@@ -629,35 +822,46 @@ export const Documents = () => {
         onRequestClose={closePreview}
       >
         <View className="flex-1 bg-white">
-          <View className="flex-row items-center justify-between px-5 pt-12 pb-4 border-b border-slate-100 bg-white shadow-sm z-10">
+          <View
+            className="flex-row items-center justify-between px-5 pt-12 pb-4 bg-white"
+            style={{ borderBottomWidth: 1, borderBottomColor: LINE }}
+          >
             <View className="flex-1 pr-4">
               <Text
-                className="text-lg font-bold text-slate-800"
+                className="text-[17px] font-bold"
+                style={{ color: INK }}
                 numberOfLines={1}
               >
                 {selectedDoc?.title}
               </Text>
-              <Text className="text-xs text-slate-500 mt-0.5">PDF Preview</Text>
+              <Text className="text-[12px] mt-0.5" style={{ color: MUTED }}>
+                PDF preview
+              </Text>
             </View>
             <Pressable
               onPress={closePreview}
-              className="h-10 w-10 items-center justify-center rounded-full bg-slate-100"
+              accessibilityLabel="Close preview"
+              className="h-10 w-10 items-center justify-center rounded-full"
+              style={{ backgroundColor: PAGE_BG }}
             >
               <X color="#475569" size={20} />
             </Pressable>
           </View>
 
           {selectedDoc?.rejected && (
-            <View className="px-5 pb-3 bg-white border-b border-slate-100">
+            <View
+              className="px-5 pb-3 bg-white"
+              style={{ borderBottomWidth: 1, borderBottomColor: LINE }}
+            >
               <RejectionNote reason={selectedDoc.reason} />
             </View>
           )}
 
-          <View className="flex-1 bg-slate-100">
+          <View className="flex-1" style={{ backgroundColor: PAGE_BG }}>
             {isLoadingPdf ? (
               <View className="flex-1 items-center justify-center">
                 <ActivityIndicator size="large" color={themeColor} />
-                <Text className="mt-4 text-slate-500 font-medium">
+                <Text className="mt-4 font-medium" style={{ color: MUTED }}>
                   Downloading document preview...
                 </Text>
               </View>
@@ -679,7 +883,7 @@ export const Documents = () => {
             ) : (
               <View className="flex-1 items-center justify-center">
                 <AlertCircle color="#94A3B8" size={40} />
-                <Text className="mt-4 text-slate-400 font-medium">
+                <Text className="mt-4 font-medium" style={{ color: MUTED }}>
                   No document source found.
                 </Text>
               </View>
@@ -708,17 +912,22 @@ export const Documents = () => {
             <View className="flex-row justify-between items-center mb-1">
               <View className="flex-1 pr-3">
                 <Text
-                  className="text-lg font-bold text-slate-900"
+                  className="text-lg font-bold"
+                  style={{ color: INK }}
                   numberOfLines={1}
                 >
                   {filesDoc?.title}
                 </Text>
-                <Text className="text-xs text-slate-500 mt-0.5">
+                <Text className="text-[12px] mt-0.5" style={{ color: MUTED }}>
                   {filesSubmissions.length}{' '}
                   {filesSubmissions.length === 1 ? 'file' : 'files'} submitted
                 </Text>
               </View>
-              <Pressable onPress={() => setFilesDocId(null)} className="p-1">
+              <Pressable
+                onPress={() => setFilesDocId(null)}
+                accessibilityLabel="Close"
+                className="p-1"
+              >
                 <X size={20} color="#64748B" />
               </Pressable>
             </View>
@@ -730,7 +939,7 @@ export const Documents = () => {
               {filesSubmissions.length === 0 ? (
                 <View className="items-center justify-center py-10">
                   <FileText color="#CBD5E1" size={40} />
-                  <Text className="text-slate-400 text-sm mt-3">
+                  <Text className="text-sm mt-3" style={{ color: MUTED }}>
                     No files submitted yet.
                   </Text>
                 </View>
@@ -744,14 +953,20 @@ export const Documents = () => {
                   return (
                     <View
                       key={entry.key}
-                      className={
-                        'py-3 ' + (i > 0 ? 'border-t border-slate-100' : '')
+                      className="py-3"
+                      style={
+                        i > 0
+                          ? { borderTopWidth: 1, borderTopColor: LINE }
+                          : undefined
                       }
                     >
                       <View className="flex-row items-center justify-between">
                         <View className="flex-1 pr-3">
                           <View className="flex-row items-center">
-                            <Text className="text-[13px] font-semibold text-slate-700">
+                            <Text
+                              className="text-[14px] font-semibold"
+                              style={{ color: INK }}
+                            >
                               {label}
                             </Text>
                             {entry.isCurrent && (
@@ -762,7 +977,7 @@ export const Documents = () => {
                                 }}
                               >
                                 <Text
-                                  className="text-[9px] font-bold uppercase tracking-wider"
+                                  className="text-[11px] font-semibold"
                                   style={{ color: themeColor }}
                                 >
                                   Current
@@ -770,7 +985,7 @@ export const Documents = () => {
                               </View>
                             )}
                           </View>
-                          <View className="mt-1 flex-row">
+                          <View className="mt-1.5 flex-row">
                             <StatusBadge status={entry.status} />
                           </View>
                         </View>
@@ -779,12 +994,12 @@ export const Documents = () => {
                           onPress={() =>
                             filesDoc && viewFromFiles(filesDoc, entry, label)
                           }
-                          className="flex-row items-center px-3.5 py-2 rounded-xl border"
-                          style={{ borderColor: themeColor }}
+                          className="flex-row items-center px-3.5 py-2 rounded-xl"
+                          style={{ borderWidth: 1, borderColor: themeColor }}
                         >
-                          <File color={themeColor} size={13} strokeWidth={2} />
+                          <File color={themeColor} size={14} strokeWidth={2} />
                           <Text
-                            className="ml-1.5 font-bold text-[11px]"
+                            className="ml-1.5 font-semibold text-[12px]"
                             style={{ color: themeColor }}
                           >
                             View
@@ -832,10 +1047,16 @@ export const Documents = () => {
               )}
             </View>
 
-            <Text className="text-xl font-bold text-slate-800 text-center mb-2">
+            <Text
+              className="text-xl font-bold text-center mb-2"
+              style={{ color: INK }}
+            >
               {modalConfig.title}
             </Text>
-            <Text className="text-sm text-slate-500 text-center mb-6 leading-5">
+            <Text
+              className="text-sm text-center mb-6 leading-5"
+              style={{ color: MUTED }}
+            >
               {modalConfig.message}
             </Text>
 
@@ -843,7 +1064,7 @@ export const Documents = () => {
               onPress={() =>
                 setModalConfig(prev => ({ ...prev, visible: false }))
               }
-              className="w-full py-3.5 rounded-2xl items-center shadow-sm"
+              className="w-full py-3.5 rounded-2xl items-center"
               style={{
                 backgroundColor:
                   modalConfig.type === 'success' ? themeColor : '#DC2626',

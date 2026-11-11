@@ -1,30 +1,36 @@
 import React, { useEffect } from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { Platform, Pressable, Text, View } from 'react-native';
 import {
-    createBottomTabNavigator,
-    type BottomTabBarProps,
+  createBottomTabNavigator,
+  type BottomTabBarProps,
 } from '@react-navigation/bottom-tabs';
-import { LayoutGrid as HomeIcon, User, Clock10Icon, FileText, BarChart2 } from 'lucide-react-native';
+import {
+  LayoutGrid as HomeIcon,
+  User,
+  Clock10Icon,
+  FileText,
+  BarChart2,
+} from 'lucide-react-native';
 import Animated, {
-    useAnimatedStyle,
-    useSharedValue,
-    withSpring,
-    withTiming,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
 } from 'react-native-reanimated';
 
 import Home from '../pages/Home';
 import Profile from '../pages/Profile';
 import TimeLogs from '../pages/TimeLogs';
-import { Documents } from '../pages/Documents';
+import { Documents, usePendingDocsCount } from '../pages/Documents';
 import Reports from '../pages/Reports';
 import { useUser } from '../util/queries/auth';
 import {
-    useUnreadDocumentNotifications,
-    useMarkInAppNotificationsRead,
+  useUnreadDocumentNotifications,
+  useMarkInAppNotificationsRead,
 } from '../util/queries/notifications';
 
 function withAlpha(hex: string, alpha: string) {
-    return `${hex}${alpha}`;
+  return `${hex}${alpha}`;
 }
 
 const Tab = createBottomTabNavigator();
@@ -33,211 +39,250 @@ const ACTIVE_COLOR = '#1D4ED8'; // blue-700
 const INACTIVE_COLOR = '#94A3B8'; // slate-400
 
 const ICONS: Record<
-    string,
-    React.ComponentType<{ color: string; size: number; strokeWidth: number }>
+  string,
+  React.ComponentType<{ color: string; size: number; strokeWidth: number }>
 > = {
-    Home: HomeIcon,
-    Profile: User,
-    TimeLogs: Clock10Icon,
-    Documents: FileText,
-    Reports: BarChart2,
+  Home: HomeIcon,
+  Profile: User,
+  TimeLogs: Clock10Icon,
+  Documents: FileText,
+  Reports: BarChart2,
 };
 
 const LABELS: Record<string, string> = {
-    Home: 'Home',
-    Profile: 'Profile',
-    TimeLogs: 'Time Logs',
-    Documents: 'Docs',
-    Reports: 'Reports',
+  Home: 'Home',
+  Profile: 'Profile',
+  TimeLogs: 'Time Logs',
+  Documents: 'Docs',
+  Reports: 'Reports',
 };
 
 function CustomTabBar({ state, navigation }: BottomTabBarProps) {
-    const { data: userData } = useUser();
-    const themeColor = userData?.settings?.theme_color || ACTIVE_COLOR;
+  const { data: userData } = useUser();
+  const themeColor = userData?.settings?.theme_color || ACTIVE_COLOR;
 
-    const tabCount = state.routes.length;
-    const [barWidth, setBarWidth] = React.useState(0);
-    const tabWidth = barWidth / Math.max(tabCount, 1);
+  const tabCount = state.routes.length;
+  const [barWidth, setBarWidth] = React.useState(0);
+  const tabWidth = barWidth / Math.max(tabCount, 1);
 
-    const indicatorX = useSharedValue(0);
+  const indicatorX = useSharedValue(0);
 
-    const unreadDocNotifs = useUnreadDocumentNotifications();
-    const hasDocBadge = unreadDocNotifs.length > 0;
-    const markAllRead = useMarkInAppNotificationsRead();
+  // Unread "new document activity" notifications (dot, clears on focus)
+  const unreadDocNotifs = useUnreadDocumentNotifications();
+  const hasDocBadge = unreadDocNotifs.length > 0;
+  const markAllRead = useMarkInAppNotificationsRead();
 
-    // Clear the badge as soon as the Documents tab becomes focused
-    useEffect(() => {
-        const focusedRoute = state.routes[state.index];
-        if (focusedRoute?.name === 'Documents' && hasDocBadge) {
-            markAllRead.mutate();
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [state.index, hasDocBadge]);
+  // Documents the intern still has to submit / re-upload (count, persists
+  // until the work is actually done)
+  const pendingDocsCount = usePendingDocsCount();
 
-    useEffect(() => {
-        if (tabWidth > 0) {
-            indicatorX.value = withSpring(state.index * tabWidth, {
-                damping: 16,
-                stiffness: 180,
-            });
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [state.index, tabWidth]);
+  // Clear the notification dot as soon as the Documents tab becomes focused
+  useEffect(() => {
+    const focusedRoute = state.routes[state.index];
+    if (focusedRoute?.name === 'Documents' && hasDocBadge) {
+      markAllRead.mutate();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.index, hasDocBadge]);
 
-    const indicatorStyle = useAnimatedStyle(() => ({
-        transform: [{ translateX: indicatorX.value }],
-        width: tabWidth,
-    }));
+  useEffect(() => {
+    if (tabWidth > 0) {
+      indicatorX.value = withSpring(state.index * tabWidth, {
+        damping: 16,
+        stiffness: 180,
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.index, tabWidth]);
 
-    return (
-        <View
-            className="absolute left-4 right-4 flex-row rounded-3xl bg-white px-2"
-            style={{
-                bottom: Platform.OS === 'ios' ? 24 : 16,
-                height: 66,
-                shadowColor: '#0F172A',
-                shadowOpacity: 0.12,
-                shadowRadius: 16,
-                shadowOffset: { width: 0, height: 8 },
-                elevation: 10,
+  const indicatorStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: indicatorX.value }],
+    width: tabWidth,
+  }));
+
+  return (
+    <View
+      className="absolute left-4 right-4 flex-row rounded-3xl bg-white px-2"
+      style={{
+        bottom: Platform.OS === 'ios' ? 24 : 16,
+        height: 66,
+        shadowColor: '#0F172A',
+        shadowOpacity: 0.12,
+        shadowRadius: 16,
+        shadowOffset: { width: 0, height: 8 },
+        elevation: 10,
+      }}
+      onLayout={event => setBarWidth(event.nativeEvent.layout.width)}
+    >
+      {tabWidth > 0 ? (
+        <Animated.View
+          pointerEvents="none"
+          className="absolute top-2"
+          style={[
+            {
+              backgroundColor: withAlpha(themeColor, '12'),
+              height: 50,
+              borderRadius: 18,
+              marginHorizontal: 8,
+              width: tabWidth - 16,
+            },
+            indicatorStyle,
+          ]}
+        />
+      ) : null}
+
+      {state.routes.map((route, index) => {
+        const isFocused = state.index === index;
+        const Icon = ICONS[route.name] ?? HomeIcon;
+        const label = LABELS[route.name] ?? route.name;
+        const isDocs = route.name === 'Documents';
+
+        return (
+          <TabBarButton
+            key={route.key}
+            isFocused={isFocused}
+            label={label}
+            Icon={Icon}
+            themeColor={themeColor}
+            badgeCount={isDocs ? pendingDocsCount : 0}
+            showDot={isDocs && hasDocBadge}
+            onPress={() => {
+              const event = navigation.emit({
+                type: 'tabPress',
+                target: route.key,
+                canPreventDefault: true,
+              });
+
+              if (!isFocused && !event.defaultPrevented) {
+                navigation.navigate(route.name);
+              }
             }}
-            onLayout={(event) => setBarWidth(event.nativeEvent.layout.width)}
-        >
-            {tabWidth > 0 ? (
-                <Animated.View
-                    pointerEvents="none"
-                    className="absolute top-2"
-                    style={[
-                        {
-                            backgroundColor: withAlpha(themeColor, '12'),
-                            height: 50,
-                            borderRadius: 18,
-                            marginHorizontal: 8,
-                            width: tabWidth - 16,
-                        },
-                        indicatorStyle,
-                    ]}
-                />
-            ) : null}
-
-            {state.routes.map((route, index) => {
-                const isFocused = state.index === index;
-                const Icon = ICONS[route.name] ?? HomeIcon;
-                const label = LABELS[route.name] ?? route.name;
-                const showBadge = route.name === 'Documents' && hasDocBadge;
-
-                return (
-                    <TabBarButton
-                        key={route.key}
-                        isFocused={isFocused}
-                        label={label}
-                        Icon={Icon}
-                        themeColor={themeColor}
-                        showBadge={showBadge}
-                        onPress={() => {
-                            const event = navigation.emit({
-                                type: 'tabPress',
-                                target: route.key,
-                                canPreventDefault: true,
-                            });
-
-                            if (!isFocused && !event.defaultPrevented) {
-                                navigation.navigate(route.name);
-                            }
-                        }}
-                    />
-                );
-            })}
-        </View>
-    );
+          />
+        );
+      })}
+    </View>
+  );
 }
 
 function TabBarButton({
-    isFocused,
-    label,
-    Icon,
-    themeColor,
-    showBadge,
-    onPress,
+  isFocused,
+  label,
+  Icon,
+  themeColor,
+  badgeCount = 0,
+  showDot,
+  onPress,
 }: {
-    isFocused: boolean;
-    label: string;
-    Icon: React.ComponentType<{
-        color: string;
-        size: number;
-        strokeWidth: number;
-    }>;
-    themeColor: string;
-    showBadge?: boolean;
-    onPress: () => void;
+  isFocused: boolean;
+  label: string;
+  Icon: React.ComponentType<{
+    color: string;
+    size: number;
+    strokeWidth: number;
+  }>;
+  themeColor: string;
+  badgeCount?: number;
+  showDot?: boolean;
+  onPress: () => void;
 }) {
-    const scale = useSharedValue(1);
+  const scale = useSharedValue(1);
 
-    useEffect(() => {
-        scale.value = withSpring(isFocused ? 1.08 : 1, {
-            damping: 10,
-            stiffness: 200,
-        });
-    }, [isFocused, scale]);
+  useEffect(() => {
+    scale.value = withSpring(isFocused ? 1.08 : 1, {
+      damping: 10,
+      stiffness: 200,
+    });
+  }, [isFocused, scale]);
 
-    const iconStyle = useAnimatedStyle(() => ({
-        transform: [{ scale: scale.value }],
-    }));
+  const iconStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
 
-    const labelStyle = useAnimatedStyle(() => ({
-        opacity: withTiming(isFocused ? 1 : 0.7, { duration: 150 }),
-    }));
+  const labelStyle = useAnimatedStyle(() => ({
+    opacity: withTiming(isFocused ? 1 : 0.7, { duration: 150 }),
+  }));
 
-    return (
-        <Pressable
-            onPress={onPress}
-            className="z-10 flex-1 items-center justify-center"
-        >
-            <Animated.View style={iconStyle}>
-                <Icon
-                    color={isFocused ? themeColor : INACTIVE_COLOR}
-                    size={22}
-                    strokeWidth={isFocused ? 2.4 : 2}
-                />
-                {showBadge && (
-                    <View
-                        style={{
-                            position: 'absolute',
-                            top: -2,
-                            right: -4,
-                            width: 8,
-                            height: 8,
-                            borderRadius: 4,
-                            backgroundColor: '#EF4444',
-                            borderWidth: 1.5,
-                            borderColor: '#fff',
-                        }}
-                    />
-                )}
-            </Animated.View>
-            <Animated.Text
-                style={[labelStyle, { color: isFocused ? themeColor : INACTIVE_COLOR }]}
-                className="mt-1 text-[11px] font-semibold"
+  return (
+    <Pressable
+      onPress={onPress}
+      className="z-10 flex-1 items-center justify-center"
+    >
+      <Animated.View style={iconStyle}>
+        <Icon
+          color={isFocused ? themeColor : INACTIVE_COLOR}
+          size={22}
+          strokeWidth={isFocused ? 2.4 : 2}
+        />
+
+        {badgeCount > 0 ? (
+          // Count of documents that still need action
+          <View
+            style={{
+              position: 'absolute',
+              top: -6,
+              right: -10,
+              minWidth: 16,
+              height: 16,
+              paddingHorizontal: 4,
+              borderRadius: 8,
+              backgroundColor: '#EF4444',
+              borderWidth: 1.5,
+              borderColor: '#fff',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <Text
+              style={{
+                color: '#fff',
+                fontSize: 9,
+                fontWeight: '700',
+                lineHeight: 11,
+              }}
             >
-                {label}
-            </Animated.Text>
-        </Pressable>
-    );
+              {badgeCount > 9 ? '9+' : badgeCount}
+            </Text>
+          </View>
+        ) : showDot ? (
+          // Nothing pending, but there's unread document activity
+          <View
+            style={{
+              position: 'absolute',
+              top: -2,
+              right: -4,
+              width: 8,
+              height: 8,
+              borderRadius: 4,
+              backgroundColor: '#EF4444',
+              borderWidth: 1.5,
+              borderColor: '#fff',
+            }}
+          />
+        ) : null}
+      </Animated.View>
+      <Animated.Text
+        style={[labelStyle, { color: isFocused ? themeColor : INACTIVE_COLOR }]}
+        className="mt-1 text-[11px] font-semibold"
+      >
+        {label}
+      </Animated.Text>
+    </Pressable>
+  );
 }
 
 export default function BottomTabs() {
-    return (
-      <Tab.Navigator
-        tabBar={props => <CustomTabBar {...props} />}
-        screenOptions={{
-          headerShown: false,
-        }}
-      >
-        <Tab.Screen name="Home" component={Home} />
-        <Tab.Screen name="TimeLogs" component={TimeLogs} />
-        <Tab.Screen name="Reports" component={Reports} />
-        <Tab.Screen name="Documents" component={Documents} />
-        <Tab.Screen name="Profile" component={Profile} />
-      </Tab.Navigator>
-    );
+  return (
+    <Tab.Navigator
+      tabBar={props => <CustomTabBar {...props} />}
+      screenOptions={{
+        headerShown: false,
+      }}
+    >
+      <Tab.Screen name="Home" component={Home} />
+      <Tab.Screen name="TimeLogs" component={TimeLogs} />
+      <Tab.Screen name="Reports" component={Reports} />
+      <Tab.Screen name="Documents" component={Documents} />
+      <Tab.Screen name="Profile" component={Profile} />
+    </Tab.Navigator>
+  );
 }

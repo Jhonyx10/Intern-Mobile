@@ -9,8 +9,6 @@ import {
 import Animated, { FadeInUp, FadeInDown } from 'react-native-reanimated';
 import {
   CheckCircle2,
-  Clock,
-  MapPin,
   AlertCircle,
   Coffee,
   LogIn,
@@ -46,11 +44,19 @@ import {
 } from '../util/timeLogHelpers';
 
 import StatusBadge from '../components/timelogs/StatusBadge';
-import InfoRow from '../components/timelogs/InfoRow';
 import FaceEnrollModal from '../components/modal/FaceEnrollModal';
 import TaskNoteModal from '../components/modal/TaskNoteModal';
 import PunchActionCard from '../components/timelogs/PunchActionCard';
 import { useExcursion } from '../util/ExcursionContext';
+import {
+  PAGE_BG,
+  LINE,
+  INK,
+  MUTED,
+  Section,
+  Panel,
+  DetailRow,
+} from '../components/ScreenKit';
 
 import { useOfflineSync } from '../components/OfflineSyncProvider';
 import { getOfflineQueue } from '../util/offlineQueue';
@@ -238,7 +244,10 @@ export default function TimeLogs() {
 
   if (isLoading) {
     return (
-      <View className="flex-1 items-center justify-center bg-slate-50">
+      <View
+        className="flex-1 items-center justify-center"
+        style={{ backgroundColor: PAGE_BG }}
+      >
         <ActivityIndicator size="large" color={themeColor} />
       </View>
     );
@@ -246,9 +255,12 @@ export default function TimeLogs() {
 
   if (isError || !status) {
     return (
-      <View className="flex-1 items-center justify-center bg-slate-50 px-8">
+      <View
+        className="flex-1 items-center justify-center px-8"
+        style={{ backgroundColor: PAGE_BG }}
+      >
         <AlertCircle color="#94A3B8" size={48} />
-        <Text className="text-slate-500 text-center text-base mt-4">
+        <Text className="text-center text-base mt-4" style={{ color: MUTED }}>
           Unable to load time log status.
         </Text>
         <Pressable
@@ -378,230 +390,222 @@ export default function TimeLogs() {
     return 'Task note & photos logged';
   })();
 
+  const geofenceConfigured = Boolean(status?.geofence?.configured);
+
+  const openUpdateTask = () =>
+    navigation.navigate('UpdateTask', {
+      timeLogId: status.open_log.id,
+    });
+
   return (
     <>
       <ScrollView
-        style={{ flex: 1, backgroundColor: '#F8FAFC' }}
+        style={{ flex: 1, backgroundColor: PAGE_BG }}
         contentContainerStyle={{ paddingBottom: 106 }}
         showsVerticalScrollIndicator={false}
       >
+        {/* Header: same gradient as Home */}
         <Animated.View entering={FadeInDown.duration(400)}>
           <LinearGradient
             colors={[themeColor, withAlpha(themeColor, 'CC')]}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
             style={{
-              paddingTop: 52,
-              paddingBottom: 56,
-              paddingHorizontal: 24,
-              borderBottomLeftRadius: 36,
-              borderBottomRightRadius: 36,
+              paddingTop: 56,
+              paddingBottom: 84,
+              paddingHorizontal: 20,
+              borderBottomLeftRadius: 32,
+              borderBottomRightRadius: 32,
             }}
           >
-            <Text className="text-white text-[22px] font-bold">Time Logs</Text>
-            <Text className="text-white/60 text-[13px] mt-1">
+            <Text className="text-[26px] font-bold text-white">Time logs</Text>
+            <Text
+              className="text-[13px] mt-1.5"
+              style={{ color: 'rgba(255,255,255,0.8)' }}
+            >
               Track your daily OJT attendance
             </Text>
           </LinearGradient>
         </Animated.View>
 
-        <View className="px-5" style={{ marginTop: -28 }}>
-          {pendingExcursionCount > 0 && (
-            <Animated.View
-              entering={FadeInUp.duration(400)}
-              className="flex-row items-center rounded-2xl bg-amber-50 px-4 py-3 mb-4 border border-amber-100"
-            >
-              <AlertCircle color="#D97706" size={18} />
-              <View className="ml-2.5 flex-1">
-                <Text className="text-[12px] font-medium text-amber-700">
-                  You have {pendingExcursionCount} pending excursion(s).
-                </Text>
-                <Pressable onPress={() => openFirstPending()}>
-                  <Text className="text-[12px] font-bold text-amber-700 mt-1 underline">
-                    Provide reason
-                  </Text>
-                </Pressable>
-              </View>
-            </Animated.View>
-          )}
-
-          {locationError && (
-            <Animated.View
-              entering={FadeInUp.duration(400)}
-              className="flex-row items-center rounded-2xl bg-red-50 px-4 py-3 mb-4 border border-red-100"
-            >
-              <AlertCircle color="#DC2626" size={18} />
-              <Text className="ml-2.5 text-[12px] font-medium text-red-700 flex-1">
-                {locationError}
-              </Text>
-            </Animated.View>
-          )}
-
+        <View className="px-5" style={{ marginTop: -56 }}>
+          {/* The main action floats over the header */}
           {status.face_enrolled && isRemoved && (
             <Animated.View
               entering={FadeInUp.duration(500).delay(200).springify()}
-              className="rounded-3xl bg-white mb-4 p-5"
-              style={{
-                borderWidth: 1.5,
-                borderColor: '#FCA5A5',
-                shadowColor: '#0F172A',
-                shadowOpacity: 0.08,
-                shadowRadius: 14,
-                shadowOffset: { width: 0, height: 5 },
-                elevation: 3,
-              }}
             >
-              <View className="flex-row items-center">
-                <View
-                  className="rounded-2xl p-3 mr-3"
-                  style={{ backgroundColor: '#FEE2E2' }}
-                >
-                  <AlertCircle color="#DC2626" size={24} />
+              <Panel accent="#DC2626">
+                <View className="flex-row items-center p-4">
+                  <View
+                    className="items-center justify-center rounded-full"
+                    style={{
+                      width: 38,
+                      height: 38,
+                      backgroundColor: '#FEE2E2',
+                    }}
+                  >
+                    <AlertCircle color="#DC2626" size={20} />
+                  </View>
+                  <View className="flex-1 ml-3">
+                    <Text
+                      className="text-[14px] font-semibold"
+                      style={{ color: '#B91C1C' }}
+                    >
+                      Time tracking unavailable
+                    </Text>
+                    <Text
+                      className="text-[13px] mt-1 leading-5"
+                      style={{ color: MUTED }}
+                    >
+                      You've been removed from your company placement, so
+                      punching in or out is disabled.
+                    </Text>
+                  </View>
                 </View>
-                <View className="flex-1">
-                  <Text className="text-[14px] font-bold text-slate-900">
-                    Time tracking unavailable
-                  </Text>
-                  <Text className="text-[12px] text-slate-500 mt-0.5 leading-5">
-                    You've been removed from your company placement, so punching
-                    in or out is disabled.
-                  </Text>
-                </View>
-              </View>
+              </Panel>
             </Animated.View>
           )}
 
           {status.face_enrolled && !isRemoved && (
-            <PunchActionCard punch={punch} isPunching={isPunching} />
-          )}
-
-          {taskNeedsUpdate && (
             <Animated.View
-              entering={FadeInUp.duration(400)}
-              className="flex-row items-center rounded-2xl bg-amber-50 px-4 py-3 mb-4 border border-amber-100"
+              entering={FadeInUp.duration(500).delay(200).springify()}
             >
-              <FileText color="#D97706" size={18} />
-              <View className="ml-2.5 flex-1">
-                <Text className="text-[12px] font-medium text-amber-700">
-                  {taskChecker?.message ??
-                    `Don't forget to log your ${taskSessionLabel.toLowerCase()} task note and photo(s).`}
-                </Text>
-                <Pressable
-                  onPress={() =>
-                    navigation.navigate('UpdateTask', {
-                      timeLogId: status.open_log.id,
-                    })
-                  }
-                >
-                  <Text className="text-[12px] font-bold text-amber-700 mt-1 underline">
-                    Update now
-                  </Text>
-                </Pressable>
-              </View>
+              <PunchActionCard punch={punch} isPunching={isPunching} />
             </Animated.View>
           )}
 
-          <Animated.View
+          {/* Notices */}
+          {locationError && (
+            <Animated.View entering={FadeInUp.duration(400)} className="mt-4">
+              <Panel accent="#DC2626">
+                <View className="flex-row items-center p-4">
+                  <AlertCircle color="#DC2626" size={18} />
+                  <Text
+                    className="ml-3 flex-1 text-[13px] leading-5"
+                    style={{ color: '#B91C1C' }}
+                  >
+                    {locationError}
+                  </Text>
+                </View>
+              </Panel>
+            </Animated.View>
+          )}
+
+          {pendingExcursionCount > 0 && (
+            <Animated.View entering={FadeInUp.duration(400)} className="mt-4">
+              <Panel accent="#D97706">
+                <View className="flex-row items-center p-4">
+                  <AlertCircle color="#D97706" size={18} />
+                  <View className="ml-3 flex-1">
+                    <Text
+                      className="text-[13px] font-semibold"
+                      style={{ color: INK }}
+                    >
+                      {pendingExcursionCount === 1
+                        ? '1 pending excursion'
+                        : `${pendingExcursionCount} pending excursions`}
+                    </Text>
+                    <Pressable onPress={() => openFirstPending()}>
+                      <Text
+                        className="text-[13px] font-semibold mt-1"
+                        style={{ color: themeColor }}
+                      >
+                        Provide a reason
+                      </Text>
+                    </Pressable>
+                  </View>
+                </View>
+              </Panel>
+            </Animated.View>
+          )}
+
+          {taskNeedsUpdate && (
+            <Animated.View entering={FadeInUp.duration(400)} className="mt-4">
+              <Panel accent="#D97706">
+                <View className="flex-row items-center p-4">
+                  <FileText color="#D97706" size={18} />
+                  <View className="ml-3 flex-1">
+                    <Text
+                      className="text-[13px] leading-5"
+                      style={{ color: INK }}
+                    >
+                      {taskChecker?.message ??
+                        `Don't forget to log your ${taskSessionLabel.toLowerCase()} task note and photo(s).`}
+                    </Text>
+                    <Pressable onPress={openUpdateTask}>
+                      <Text
+                        className="text-[13px] font-semibold mt-1"
+                        style={{ color: themeColor }}
+                      >
+                        Update now
+                      </Text>
+                    </Pressable>
+                  </View>
+                </View>
+              </Panel>
+            </Animated.View>
+          )}
+
+          {/* Today's attendance */}
+          <Section
+            title="Today's attendance"
             entering={FadeInUp.duration(500).delay(300).springify()}
-            className="rounded-3xl bg-white mb-4"
-            style={{
-              shadowColor: '#0F172A',
-              shadowOpacity: 0.06,
-              shadowRadius: 14,
-              shadowOffset: { width: 0, height: 5 },
-              elevation: 2,
-              borderWidth: 1,
-              borderColor: '#F1F5F9',
-            }}
-          >
-            <View className="px-5 pt-5 pb-2 flex-row items-center justify-between">
-              <Text className="text-[11px] font-bold uppercase tracking-[1.5px] text-slate-400">
-                Today's Attendance
-              </Text>
+            right={
               <StatusBadge
                 label={status.today_attendance.label}
                 status={status.today_attendance.status}
               />
-            </View>
-            <View className="px-5 pb-5">
-              <InfoRow
-                icon={Clock}
+            }
+          >
+            <Panel>
+              <DetailRow
                 label="Schedule"
                 value={status.today_attendance.schedule_label}
-                themeColor={themeColor}
               />
-              <InfoRow
-                icon={Clock}
-                label="Hours Today"
+              <DetailRow
+                label="Hours today"
                 value={`${status.today_hours} hrs (${status.today_minutes} min)`}
-                themeColor={themeColor}
+                last
               />
-            </View>
-          </Animated.View>
+            </Panel>
+          </Section>
 
-          <Animated.View
+          {/* Today's timeline */}
+          <Section
+            title="Today's timeline"
             entering={FadeInUp.duration(500).delay(350).springify()}
-            className="rounded-3xl bg-white mb-4"
-            style={{
-              shadowColor: '#0F172A',
-              shadowOpacity: 0.06,
-              shadowRadius: 14,
-              shadowOffset: { width: 0, height: 5 },
-              elevation: 2,
-              borderWidth: 1,
-              borderColor: '#F1F5F9',
-            }}
           >
-            <View className="px-5 pt-5 pb-2 flex-row items-center justify-between">
-              <Text className="text-[11px] font-bold uppercase tracking-[1.5px] text-slate-400">
-                Today's Timeline
-              </Text>
-            </View>
-            <View className="px-5 pb-5">
-              <InfoRow
-                icon={LogIn}
-                label="Time In"
+            <Panel>
+              <DetailRow
+                label="Morning time in"
                 value={formatLogTime(timelineEntry?.time_in)}
-                themeColor={themeColor}
               />
-              <InfoRow
-                icon={Coffee}
-                label="Time Out"
+              <DetailRow
+                label="Morning time out"
                 value={formatLogTime(timelineEntry?.break_out)}
-                themeColor={themeColor}
               />
-              <InfoRow
-                icon={Sunrise}
-                label="Time In"
+              <DetailRow
+                label="Afternoon time in"
                 value={formatLogTime(timelineEntry?.break_in)}
-                themeColor={themeColor}
               />
-              <InfoRow
-                icon={LogOut}
-                label="Time Out"
+              <DetailRow
+                label="Afternoon time out"
                 value={formatLogTime(timelineEntry?.time_out)}
-                themeColor={themeColor}
+                last
               />
 
               {status?.open_log?.id && taskNeedsUpdate && (
                 <Pressable
-                  onPress={() =>
-                    navigation.navigate('UpdateTask', {
-                      timeLogId: status.open_log.id,
-                    })
-                  }
-                  className="mt-4 flex-row items-center justify-center rounded-2xl py-3 border"
-                  style={{
-                    borderColor: themeColor,
-                    backgroundColor: withAlpha(themeColor, '05'),
-                  }}
+                  onPress={openUpdateTask}
+                  className="flex-row items-center justify-center py-3.5"
+                  style={{ borderTopWidth: 1, borderTopColor: LINE }}
                 >
-                  <FileText color={themeColor} size={18} />
+                  <FileText color={themeColor} size={16} strokeWidth={2} />
                   <Text
-                    className="ml-2 font-bold text-[13px]"
+                    className="font-semibold text-[14px] ml-2"
                     style={{ color: themeColor }}
                   >
-                    Update {taskSessionLabel} Task Note & Photos
+                    Update {taskSessionLabel.toLowerCase()} task note & photos
                   </Text>
                 </Pressable>
               )}
@@ -609,79 +613,71 @@ export default function TimeLogs() {
               {status?.open_log?.id &&
                 taskChecker &&
                 !taskChecker.needs_update && (
-                  <View className="mt-4 flex-row items-center justify-center rounded-2xl py-3 bg-green-50">
-                    <CheckCircle2 color="#16A34A" size={16} />
-                    <Text className="ml-2 font-semibold text-[13px] text-green-700">
+                  <View
+                    className="flex-row items-center justify-center py-3.5"
+                    style={{ borderTopWidth: 1, borderTopColor: LINE }}
+                  >
+                    <CheckCircle2 color="#059669" size={16} />
+                    <Text
+                      className="ml-2 font-semibold text-[13px]"
+                      style={{ color: '#047857' }}
+                    >
                       {loggedLabel}
                     </Text>
                   </View>
                 )}
-            </View>
-          </Animated.View>
+            </Panel>
+          </Section>
 
-          <Animated.View
+          {/* Geofence */}
+          <Section
+            title="Geofence"
             entering={FadeInUp.duration(500).delay(600).springify()}
-            className="rounded-3xl bg-white mb-4"
-            style={{
-              shadowColor: '#0F172A',
-              shadowOpacity: 0.06,
-              shadowRadius: 14,
-              shadowOffset: { width: 0, height: 5 },
-              elevation: 2,
-              borderWidth: 1,
-              borderColor: '#F1F5F9',
-            }}
-          >
-            <View className="px-5 pt-5 pb-2 flex-row items-center justify-between">
-              <Text className="text-[11px] font-bold uppercase tracking-[1.5px] text-slate-400">
-                Geofence
-              </Text>
+            right={
               <View
-                className={`rounded-full px-3 py-1 ${
-                  status?.geofence?.configured ? 'bg-green-50' : 'bg-red-50'
-                }`}
+                className="rounded-full px-2.5 py-1"
+                style={{
+                  backgroundColor: geofenceConfigured ? '#ECFDF5' : '#FEF2F2',
+                }}
               >
                 <Text
-                  className={`text-[11px] font-bold uppercase tracking-wide ${
-                    status?.geofence?.configured
-                      ? 'text-green-700'
-                      : 'text-red-600'
-                  }`}
+                  className="text-[12px] font-semibold"
+                  style={{ color: geofenceConfigured ? '#047857' : '#B91C1C' }}
                 >
-                  {status?.geofence?.configured ? 'Configured' : 'Not Set'}
+                  {geofenceConfigured ? 'Configured' : 'Not set'}
                 </Text>
               </View>
-            </View>
-            <View className="px-5 pb-4 pt-2">
-              <InfoRow
-                icon={MapPin}
+            }
+          >
+            <Panel>
+              <DetailRow
                 label="Company"
                 value={status?.geofence?.company_name || 'Unassigned'}
-                themeColor={themeColor}
               />
-              <InfoRow
-                icon={MapPin}
+              <DetailRow
                 label="Radius"
                 value={
                   status?.geofence?.radius_meters
-                    ? `${status.geofence.radius_meters}m`
+                    ? `${status.geofence.radius_meters} m`
                     : 'N/A'
                 }
-                themeColor={themeColor}
+                last
               />
-            </View>
-            {isGeofenceActive && dashboard?.company && polygonCoords && (
-              <GeofenceMap
-                polygonCoords={geofencePolygon.coordinates}
-                centerCoordinate={[
-                  dashboard.company.longitude,
-                  dashboard.company.latitude,
-                ]}
-                isInGeofence={isInGeofence}
-                onLocationUpdate={setUserLocation}
-              />
-            )}
-          </Animated.View>
+              {isGeofenceActive && dashboard?.company && polygonCoords && (
+                <View style={{ borderTopWidth: 1, borderTopColor: LINE }}>
+                  <GeofenceMap
+                    polygonCoords={geofencePolygon.coordinates}
+                    centerCoordinate={[
+                      dashboard.company.longitude,
+                      dashboard.company.latitude,
+                    ]}
+                    isInGeofence={isInGeofence}
+                    onLocationUpdate={setUserLocation}
+                  />
+                </View>
+              )}
+            </Panel>
+          </Section>
         </View>
       </ScrollView>
 

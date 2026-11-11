@@ -68,6 +68,7 @@ export interface InAppNotification {
         body: string;
         // Extra fields set by the notifiers (all optional)
         category?: string;
+        type?: string;
         document_id?: number | string;
         student_document_id?: number;
         time_log_id?: number | string;

@@ -35,6 +35,7 @@ import {
   minutesBetween,
   formatMinutes,
 } from '../util/taskNote';
+import DtrUpdateRequest from '../components/DtrUpdateRequest';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
@@ -384,6 +385,12 @@ export default function TimeLogDetails() {
             )}
           </Animated.View>
 
+          <DtrUpdateRequest
+            log={log}
+            themeColor={themeColor}
+            onSubmitted={() => refetch()}
+          />
+          
           {/* A note that isn't tagged to a session */}
           {notes.general ? (
             <Animated.View

@@ -33,6 +33,9 @@ setBackgroundMessageHandler(messaging, async remoteMessage => {
     'in_app_notifications',
     'all_notifications',
     'evaluations',
+    'time_status',
+    'time_logs_history',
+    'time_log_detail',
   ].forEach(key => queryClient.invalidateQueries({ queryKey: [key] }));
   await displayRemoteNotification(remoteMessage);
 });

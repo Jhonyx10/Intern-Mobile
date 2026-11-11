@@ -15,8 +15,6 @@ import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
   Clock,
-  Sun,
-  Sunset,
   AlertCircle,
   FileText,
   BarChart2,
@@ -32,6 +30,7 @@ import { addWeeks, isSameWeek } from 'date-fns';
 
 import ConfirmModal from '../components/modal/ConfirmModal';
 import ExportDtrModal from '../components/modal/ExportDtrModal';
+import PdfPreviewModal from '../components/modal/PdfPreviewModal';
 
 import { RootStackParamList } from '../components/Navigation';
 import {
@@ -43,10 +42,12 @@ import { useUser } from '../util/queries/auth';
 import { useDashboard } from '../util/queries/dashboard';
 import { withAlpha, formatLogTime } from '../util/timeLogHelpers';
 import { parseTaskNote } from '../util/taskNote';
+import { PAGE_BG, LINE, INK, MUTED, Panel } from '../components/ScreenKit';
 
 // Weekly report PDF (new format: Morning/Afternoon rows + supervisor signature)
 import {
-  exportTimeLogReportPdf,
+  buildTimeLogReportPdf,
+  openPdfFile,
   formatWeekLabel,
   getWeekStart,
   filterLogsToWeek,
@@ -91,28 +92,16 @@ const PRESETS: { key: TimeLogPreset; label: string }[] = [
   { key: 'yearly', label: 'Yearly' },
 ];
 
-// One half of the day (morning / afternoon) inside the compact card
-function SessionColumn({
-  icon: Icon,
-  accent,
-  label,
-  range,
-}: {
-  icon: any;
-  accent: string;
-  label: string;
-  range: string;
-}) {
+// One half of the day (morning / afternoon) inside the log card
+function SessionColumn({ label, range }: { label: string; range: string }) {
   return (
     <View className="flex-1 px-3">
-      <View className="flex-row items-center mb-0.5">
-        <Icon color={accent} size={11} strokeWidth={2.5} />
-        <Text className="ml-1 text-[10px] font-bold text-slate-400">
-          {label}
-        </Text>
-      </View>
+      <Text className="text-[11px]" style={{ color: MUTED }}>
+        {label}
+      </Text>
       <Text
-        className="text-[12px] font-semibold text-slate-800"
+        className="text-[13px] font-semibold mt-0.5"
+        style={{ color: INK }}
         numberOfLines={1}
       >
         {range}
@@ -121,14 +110,8 @@ function SessionColumn({
   );
 }
 
-// Compact card used by the list and by the calendar day sheet
-function LogCard({
-  log,
-  themeColor,
-}: {
-  log: TimeLogEntry;
-  themeColor: string;
-}) {
+// Card used by the list and by the calendar day sheet
+function LogCard({ log }: { log: TimeLogEntry; themeColor: string }) {
   const isAutoClosed =
     log.verification_method === 'auto_closed_missed_punch_out';
 
@@ -143,128 +126,118 @@ function LogCard({
     ? `${formatLogTime(log.break_in)} – ${end(log.time_out)}`
     : '—';
 
+  const statusMeta = log.is_open
+    ? { label: 'In progress', color: '#059669' }
+    : isAutoClosed
+    ? { label: 'Auto-closed', color: '#D97706' }
+    : { label: 'Completed', color: MUTED };
+
+  const hasNotes = Boolean(note.morning || note.afternoon || note.general);
+
   return (
-    <View
-      className="rounded-2xl bg-white mb-3"
-      style={{
-        shadowColor: '#0F172A',
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        shadowOffset: { width: 0, height: 3 },
-        elevation: 1,
-        borderWidth: 1,
-        borderColor: '#F1F5F9',
-      }}
-    >
-      {/* Date + status */}
-      <View className="px-4 pt-3 pb-2 flex-row items-center justify-between">
-        <Text className="text-[12px] font-bold text-slate-800">
-          {formatLogDate(log.time_in)}
-        </Text>
-        {log.is_open ? (
-          <View className="rounded-full px-2 py-0.5 bg-green-50">
-            <Text className="text-[9px] font-bold uppercase tracking-wide text-green-700">
-              In Progress
+    <View className="mb-3">
+      <Panel>
+        <View className="p-4">
+          {/* Date + status */}
+          <View className="flex-row items-center justify-between">
+            <Text className="text-[14px] font-semibold" style={{ color: INK }}>
+              {formatLogDate(log.time_in)}
             </Text>
-          </View>
-        ) : isAutoClosed ? (
-          <View className="rounded-full px-2 py-0.5 bg-amber-50">
-            <Text className="text-[9px] font-bold uppercase tracking-wide text-amber-700">
-              Auto-closed
-            </Text>
-          </View>
-        ) : (
-          <View className="rounded-full px-2 py-0.5 bg-slate-50">
-            <Text className="text-[9px] font-bold uppercase tracking-wide text-slate-500">
-              Completed
-            </Text>
-          </View>
-        )}
-      </View>
-
-      <View className="px-4 pb-3">
-        {/* Morning | Afternoon */}
-        <View className="flex-row rounded-xl bg-slate-50 py-2">
-          <SessionColumn
-            icon={Sun}
-            accent="#F59E0B"
-            label={hasBreak ? 'Morning' : 'Shift'}
-            range={morningRange}
-          />
-          {hasBreak && (
-            <>
-              <View style={{ width: 1, backgroundColor: '#E2E8F0' }} />
-              <SessionColumn
-                icon={Sunset}
-                accent="#EA580C"
-                label="Afternoon"
-                range={afternoonRange}
+            <View className="flex-row items-center">
+              <View
+                className="rounded-full mr-1.5"
+                style={{
+                  width: 7,
+                  height: 7,
+                  backgroundColor: statusMeta.color,
+                }}
               />
-            </>
-          )}
-        </View>
+              <Text
+                className="text-[12px] font-medium"
+                style={{ color: statusMeta.color }}
+              >
+                {statusMeta.label}
+              </Text>
+            </View>
+          </View>
 
-        {/* Duration + photos */}
-        <View className="flex-row items-center justify-between mt-2">
-          <View className="flex-row items-center">
-            <Clock color="#94A3B8" size={12} />
-            <Text className="ml-1 text-[11px] font-semibold text-slate-500">
+          {/* Morning | Afternoon */}
+          <View
+            className="flex-row rounded-xl py-2.5 mt-3"
+            style={{ backgroundColor: PAGE_BG }}
+          >
+            <SessionColumn
+              label={hasBreak ? 'Morning' : 'Shift'}
+              range={morningRange}
+            />
+            {hasBreak && (
+              <>
+                <View style={{ width: 1, backgroundColor: LINE }} />
+                <SessionColumn label="Afternoon" range={afternoonRange} />
+              </>
+            )}
+          </View>
+
+          {/* Duration + photos */}
+          <View className="flex-row items-center justify-between mt-3">
+            <Text className="text-[13px] font-semibold" style={{ color: INK }}>
               {log.duration_hours != null ? `${log.duration_hours} hrs` : '—'}
             </Text>
-          </View>
-          {log.task_photos_count > 0 && (
-            <View className="flex-row items-center">
-              <FileText color="#94A3B8" size={12} />
-              <Text className="ml-1 text-[11px] font-medium text-slate-500">
+            {log.task_photos_count > 0 && (
+              <Text className="text-[12px]" style={{ color: MUTED }}>
                 {log.submitted_task_photos_count}/{log.task_photos_count} photo
                 {log.task_photos_count === 1 ? '' : 's'}
               </Text>
+            )}
+          </View>
+
+          {/* Task notes: one short line per session */}
+          {hasNotes && (
+            <View
+              className="mt-3 pt-3"
+              style={{ borderTopWidth: 1, borderTopColor: LINE }}
+            >
+              {note.morning ? (
+                <Text
+                  className="text-[12px]"
+                  style={{ color: MUTED }}
+                  numberOfLines={1}
+                >
+                  <Text style={{ color: INK, fontWeight: '600' }}>
+                    Morning{' '}
+                  </Text>
+                  {note.morning}
+                </Text>
+              ) : null}
+              {note.afternoon ? (
+                <Text
+                  className="text-[12px]"
+                  style={{ color: MUTED, marginTop: note.morning ? 4 : 0 }}
+                  numberOfLines={1}
+                >
+                  <Text style={{ color: INK, fontWeight: '600' }}>
+                    Afternoon{' '}
+                  </Text>
+                  {note.afternoon}
+                </Text>
+              ) : null}
+              {note.general ? (
+                <Text
+                  className="text-[12px]"
+                  style={{
+                    color: MUTED,
+                    marginTop: note.morning || note.afternoon ? 4 : 0,
+                  }}
+                  numberOfLines={1}
+                >
+                  <Text style={{ color: INK, fontWeight: '600' }}>Note </Text>
+                  {note.general}
+                </Text>
+              ) : null}
             </View>
           )}
         </View>
-
-        {/* Task notes: one short line per session */}
-        {(note.morning || note.afternoon || note.general) && (
-          <View className="mt-2 pt-2 border-t border-slate-100">
-            {note.morning ? (
-              <View className="flex-row items-center">
-                <Sun color="#F59E0B" size={11} />
-                <Text
-                  className="ml-1.5 text-[11px] text-slate-500 flex-1"
-                  numberOfLines={1}
-                >
-                  {note.morning}
-                </Text>
-              </View>
-            ) : null}
-            {note.afternoon ? (
-              <View
-                className="flex-row items-center"
-                style={{ marginTop: note.morning ? 3 : 0 }}
-              >
-                <Sunset color="#EA580C" size={11} />
-                <Text
-                  className="ml-1.5 text-[11px] text-slate-500 flex-1"
-                  numberOfLines={1}
-                >
-                  {note.afternoon}
-                </Text>
-              </View>
-            ) : null}
-            {note.general ? (
-              <View className="flex-row items-center">
-                <FileText color="#94A3B8" size={11} />
-                <Text
-                  className="ml-1.5 text-[11px] text-slate-500 flex-1"
-                  numberOfLines={1}
-                >
-                  {note.general}
-                </Text>
-              </View>
-            ) : null}
-          </View>
-        )}
-      </View>
+      </Panel>
     </View>
   );
 }
@@ -288,6 +261,12 @@ export default function Reports() {
   // Weekly PDF report state
   const [weekStart, setWeekStart] = useState<Date>(getWeekStart());
   const [exportingPdf, setExportingPdf] = useState(false);
+  // Generated PDF waiting in the preview modal (not shared/saved yet)
+  const [pdfPreview, setPdfPreview] = useState<{
+    path: string;
+    fileName: string;
+  } | null>(null);
+  const [openingPdf, setOpeningPdf] = useState(false);
   const isCurrentWeek = isSameWeek(weekStart, new Date(), { weekStartsOn: 1 });
 
   // DTR export modal state
@@ -336,7 +315,7 @@ export default function Reports() {
     return pages.flatMap(p => p.logs);
   };
 
-  // Button 2: weekly report PDF
+  // Button 2, step 1: build the weekly report PDF and show it in the preview
   const handleExportWeeklyPDF = async () => {
     try {
       setExportingPdf(true);
@@ -356,7 +335,7 @@ export default function Reports() {
       const studentName = userData?.user?.name ?? 'Student'; // adjust to your user field
       const supervisor = dashboard?.supervisor;
 
-      await exportTimeLogReportPdf({
+      const result = await buildTimeLogReportPdf({
         studentName,
         logs: weekLogs,
         weekStart,
@@ -373,6 +352,8 @@ export default function Reports() {
         // "Prepared by" (right signature)
         studentBy: { name: studentName },
       });
+
+      setPdfPreview(result);
     } catch (e) {
       console.error('PDF Export Error:', e);
       setInfoModal({
@@ -382,6 +363,26 @@ export default function Reports() {
       });
     } finally {
       setExportingPdf(false);
+    }
+  };
+
+  // Button 2, step 2: the user approved the preview, so save / share it
+  const handleOpenPreviewedPdf = async () => {
+    if (!pdfPreview) return;
+    try {
+      setOpeningPdf(true);
+      await openPdfFile(pdfPreview.path);
+      setPdfPreview(null);
+    } catch (e) {
+      console.error('PDF Open Error:', e);
+      setPdfPreview(null);
+      setInfoModal({
+        visible: true,
+        title: 'Could not open PDF',
+        message: 'There was an error opening the PDF.',
+      });
+    } finally {
+      setOpeningPdf(false);
     }
   };
 
@@ -454,90 +455,117 @@ export default function Reports() {
 
   const closeDateModal = () => setDateModalOpen(false);
 
+  const headerSubtitle = isCalendar
+    ? 'Tap a date to see its time logs'
+    : totalCount > 0
+    ? `${totalCount} ${
+        totalCount === 1 ? 'entry' : 'entries'
+      }, ${totalHours.toFixed(1)} hrs rendered`
+    : 'No entries for this period';
+
   return (
-    <View style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
+    <View style={{ flex: 1, backgroundColor: PAGE_BG }}>
+      {/* Header: same gradient as Home and Time logs */}
       <Animated.View entering={FadeInDown.duration(400)}>
         <LinearGradient
           colors={[themeColor, withAlpha(themeColor, 'CC')]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={{
-            paddingTop: 52,
+            paddingTop: 56,
             paddingBottom: 24,
-            paddingHorizontal: 24,
-            borderBottomLeftRadius: 36,
-            borderBottomRightRadius: 36,
+            paddingHorizontal: 20,
+            borderBottomLeftRadius: 32,
+            borderBottomRightRadius: 32,
           }}
         >
-          <View className="flex-row items-center justify-between mb-4">
-            <View className="flex-row items-center">
-              <BarChart2 color="#fff" size={22} strokeWidth={2} />
-              <Text className="text-white text-[22px] font-bold ml-2">
-                Reports
+          <View className="flex-row items-start justify-between">
+            <View className="flex-1 pr-4">
+              <Text className="text-[26px] font-bold text-white">Reports</Text>
+              <Text
+                className="text-[13px] mt-1.5"
+                style={{ color: 'rgba(255,255,255,0.8)' }}
+              >
+                {headerSubtitle}
               </Text>
             </View>
+
             <View className="flex-row items-center gap-3">
               {/* 1. Toggle list / calendar */}
               <Pressable
                 onPress={() =>
                   setViewMode(prev => (prev === 'list' ? 'calendar' : 'list'))
                 }
-                className="w-10 h-10 rounded-full bg-white/20 items-center justify-center"
+                accessibilityLabel={
+                  viewMode === 'list' ? 'Show calendar' : 'Show list'
+                }
+                className="items-center justify-center rounded-full"
+                style={{
+                  width: 42,
+                  height: 42,
+                  backgroundColor: 'rgba(255,255,255,0.18)',
+                }}
               >
                 {viewMode === 'list' ? (
-                  <CalendarIcon color="#fff" size={18} strokeWidth={2} />
+                  <CalendarIcon color="#fff" size={19} strokeWidth={2} />
                 ) : (
-                  <ListIcon color="#fff" size={18} strokeWidth={2} />
+                  <ListIcon color="#fff" size={19} strokeWidth={2} />
                 )}
               </Pressable>
 
-              {/* 2. Export weekly report PDF */}
+              {/* 2. Weekly report PDF (builds it, then opens the preview) */}
               <Pressable
                 onPress={handleExportWeeklyPDF}
                 disabled={exportingPdf}
-                className="w-10 h-10 rounded-full bg-white/20 items-center justify-center"
+                accessibilityLabel="Preview weekly report"
+                className="items-center justify-center rounded-full"
+                style={{
+                  width: 42,
+                  height: 42,
+                  backgroundColor: 'rgba(255,255,255,0.18)',
+                }}
               >
                 {exportingPdf ? (
                   <ActivityIndicator color="#fff" size="small" />
                 ) : (
-                  <FileText color="#fff" size={18} strokeWidth={2} />
+                  <FileText color="#fff" size={19} strokeWidth={2} />
                 )}
               </Pressable>
 
               {/* 3. Export DTR (opens the modal) */}
               <Pressable
                 onPress={() => setExportModalOpen(true)}
-                className="w-10 h-10 rounded-full bg-white/20 items-center justify-center"
+                accessibilityLabel="Export daily time record"
+                className="items-center justify-center rounded-full"
+                style={{
+                  width: 42,
+                  height: 42,
+                  backgroundColor: 'rgba(255,255,255,0.18)',
+                }}
               >
-                <Download color="#fff" size={18} strokeWidth={2} />
+                <Download color="#fff" size={19} strokeWidth={2} />
               </Pressable>
             </View>
           </View>
 
-          <Text className="text-white/80 text-[13px] mb-4">
-            {isCalendar
-              ? 'Tap a date to see its time logs'
-              : totalCount > 0
-              ? `${totalCount} entries · ${totalHours.toFixed(
-                  1,
-                )} hrs total (Filtered by ${preset})`
-              : `Viewing ${preset} DTR summary`}
-          </Text>
-
           {/* Week selector for the weekly PDF report */}
           <View
-            className="flex-row items-center justify-between rounded-2xl px-2 py-1.5 mb-3"
+            className="flex-row items-center justify-between rounded-2xl px-2 py-1.5 mt-5"
             style={{ backgroundColor: 'rgba(255,255,255,0.15)' }}
           >
             <Pressable
               onPress={() => setWeekStart(w => addWeeks(w, -1))}
+              accessibilityLabel="Previous week"
               className="p-2"
             >
               <ChevronLeft color="#fff" size={18} />
             </Pressable>
             <View className="items-center">
-              <Text className="text-white/70 text-[10px] font-bold uppercase tracking-wide">
-                PDF report week
+              <Text
+                className="text-[11px] font-medium"
+                style={{ color: 'rgba(255,255,255,0.75)' }}
+              >
+                Weekly report
               </Text>
               <Text className="text-white text-[13px] font-bold">
                 {formatWeekLabel(weekStart)}
@@ -546,6 +574,7 @@ export default function Reports() {
             <Pressable
               onPress={() => setWeekStart(w => addWeeks(w, 1))}
               disabled={isCurrentWeek}
+              accessibilityLabel="Next week"
               className="p-2"
               style={{ opacity: isCurrentWeek ? 0.3 : 1 }}
             >
@@ -556,7 +585,7 @@ export default function Reports() {
           {/* Preset toggle (list view only) */}
           {!isCalendar && (
             <View
-              className="flex-row rounded-2xl p-1"
+              className="flex-row rounded-2xl p-1 mt-3"
               style={{ backgroundColor: 'rgba(255,255,255,0.15)' }}
             >
               {PRESETS.map(({ key, label }) => (
@@ -569,7 +598,7 @@ export default function Reports() {
                   }
                 >
                   <Text
-                    className="text-[13px] font-bold"
+                    className="text-[13px] font-semibold"
                     style={{
                       color:
                         preset === key ? themeColor : 'rgba(255,255,255,0.85)',
@@ -607,7 +636,11 @@ export default function Reports() {
         <FlatList
           data={logs}
           keyExtractor={item => String(item.id)}
-          contentContainerStyle={{ padding: 16, paddingBottom: 106 }}
+          contentContainerStyle={{
+            paddingHorizontal: 20,
+            paddingTop: 16,
+            paddingBottom: 106,
+          }}
           renderItem={({ item, index }) => (
             <Animated.View
               entering={FadeInUp.duration(350).delay(Math.min(index, 6) * 40)}
@@ -654,10 +687,14 @@ export default function Reports() {
       ) : (
         // ---- CALENDAR VIEW ----
         <ScrollView
-          contentContainerStyle={{ padding: 16, paddingBottom: 106 }}
+          contentContainerStyle={{
+            paddingHorizontal: 20,
+            paddingTop: 16,
+            paddingBottom: 106,
+          }}
           showsVerticalScrollIndicator={false}
         >
-          <View className="rounded-3xl overflow-hidden border border-slate-200">
+          <Panel>
             <Calendar
               current={selectedDate || undefined}
               markedDates={markedDates}
@@ -678,12 +715,12 @@ export default function Reports() {
                 textMonthFontWeight: 'bold',
               }}
             />
-          </View>
+          </Panel>
 
           {(hasNextPage || isFetchingNextPage) && (
             <View className="flex-row items-center justify-center mt-4">
               <ActivityIndicator size="small" color={themeColor} />
-              <Text className="ml-2 text-[12px] text-slate-400">
+              <Text className="ml-2 text-[12px]" style={{ color: MUTED }}>
                 Loading all your logs...
               </Text>
             </View>
@@ -694,7 +731,7 @@ export default function Reports() {
               className="rounded-full mr-2"
               style={{ width: 8, height: 8, backgroundColor: themeColor }}
             />
-            <Text className="text-[12px] text-slate-400">
+            <Text className="text-[12px]" style={{ color: MUTED }}>
               Dates with a dot have time logs
             </Text>
           </View>
@@ -773,6 +810,16 @@ export default function Reports() {
         onExport={handleExportDtr}
         isExporting={isExportingDtr}
         themeColor={themeColor}
+      />
+
+      <PdfPreviewModal
+        visible={pdfPreview !== null}
+        path={pdfPreview?.path ?? null}
+        fileName={pdfPreview?.fileName ?? ''}
+        themeColor={themeColor}
+        onClose={() => setPdfPreview(null)}
+        onConfirm={handleOpenPreviewedPdf}
+        isConfirming={openingPdf}
       />
 
       <ConfirmModal

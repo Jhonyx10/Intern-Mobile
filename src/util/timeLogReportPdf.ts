@@ -31,6 +31,13 @@ export type TimeLogReportOptions = {
     fileName?: string;
 };
 
+/** What buildTimeLogReportPdf returns: where the PDF was written and its name. */
+export type TimeLogReportPdfResult = {
+    /** Absolute path in the app cache directory (no `file://` prefix) */
+    path: string;
+    fileName: string;
+};
+
 type Photo = { dataUri: string; format: 'JPEG' | 'PNG'; w: number; h: number };
 type RGB = [number, number, number];
 
@@ -363,7 +370,13 @@ function fit(p: Photo, maxW: number, maxH: number) {
 
 // ── PDF ───────────────────────────────────────────────────────────
 
-export async function exportTimeLogReportPdf(opts: TimeLogReportOptions) {
+/**
+ * Builds the weekly report and writes it to the app cache directory WITHOUT
+ * opening or sharing it, so the screen can preview it first.
+ */
+export async function buildTimeLogReportPdf(
+    opts: TimeLogReportOptions,
+): Promise<TimeLogReportPdfResult> {
     const { studentName, supervisorBy, studentBy, imageHeaders, weekNo, logos } = opts;
     const weekStart = getWeekStart(opts.weekStart);
     const fileName = opts.fileName ?? `weekly-report-${format(weekStart, 'yyyy-MM-dd')}.pdf`;
@@ -522,10 +535,28 @@ export async function exportTimeLogReportPdf(opts: TimeLogReportOptions) {
     const path = `${ReactNativeBlobUtil.fs.dirs.CacheDir}/${fileName}`;
     await ReactNativeBlobUtil.fs.writeFile(path, base64, 'base64');
 
+    return { path, fileName };
+}
+
+/**
+ * Hands an already-built PDF to the OS: the share/save menu on iOS,
+ * the "open with" chooser on Android.
+ */
+export async function openPdfFile(path: string): Promise<void> {
     if (Platform.OS === 'ios') {
         await ReactNativeBlobUtil.ios.presentOptionsMenu(path);
     } else {
         await ReactNativeBlobUtil.android.actionViewIntent(path, 'application/pdf');
     }
+}
+
+/**
+ * Builds and immediately opens the report (the old behaviour).
+ * Kept for any other callers; the Reports screen now uses
+ * buildTimeLogReportPdf + the preview modal instead.
+ */
+export async function exportTimeLogReportPdf(opts: TimeLogReportOptions) {
+    const { path } = await buildTimeLogReportPdf(opts);
+    await openPdfFile(path);
     return path;
 }

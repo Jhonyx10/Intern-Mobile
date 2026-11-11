@@ -54,33 +54,40 @@ type NavTarget =
   | { name: 'MyEvaluation' }
   | { name: 'TimeLogDetails'; params: { timeLogId: number } }
   | { name: 'TimeLogHistory' }
+  | { name: 'Reports' }
   | { name: 'Main'; params: { screen: string } } // a tab inside BottomTabs
   | null;
 
 function resolveTarget(item: InAppNotification): NavTarget {
   const d = item.data;
+  // Some notifications set `category`, the time log ones set `type`
+  const key = d?.category ?? d?.type;
 
-  switch (d?.category) {
+  switch (key) {
     case 'document':
     case 'documents':
-      // TODO: replace 'Documents' with your real tab name in BottomTabs
       return { name: 'Main', params: { screen: 'Documents' } };
 
     case 'evaluation':
       return { name: 'MyEvaluation' };
 
     case 'schedule':
-      // TODO: replace 'Schedule' with your real tab name in BottomTabs
-      return { name: 'Main', params: { screen: 'Schedule' } };
+      return { name: 'Main', params: { screen: 'Home' } };
+
+    case 'report':
+    case 'reports':
+      return { name: 'Main', params: { screen: 'Reports' } };
 
     case 'time_log':
     case 'timelog':
-      return d.time_log_id
+    case 'time_log_corrected':
+    case 'time_log_auto_closed':
+      return d?.time_log_id
         ? {
             name: 'TimeLogDetails',
             params: { timeLogId: Number(d.time_log_id) },
           }
-        : { name: 'TimeLogHistory' };
+        : { name: 'Main', params: { screen: 'TimeLogs' } };
 
     default:
       // Fallback: anything carrying a document id goes to the Documents tab

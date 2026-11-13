@@ -35,7 +35,7 @@ import {
   minutesBetween,
   formatMinutes,
 } from '../util/taskNote';
-import DtrUpdateRequest from '../components/DtrUpdateRequest';
+// import DtrUpdateRequest from '../components/DtrUpdateRequest';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
@@ -371,26 +371,47 @@ export default function TimeLogDetails() {
             </View>
 
             {isAutoClosed && (
-              <View className="mx-5 mb-4 flex-row items-start rounded-2xl bg-amber-50 px-3 py-2.5">
-                <AlertCircle
-                  color="#D97706"
-                  size={14}
-                  style={{ marginTop: 1 }}
-                />
-                <Text className="ml-2 text-[11px] text-amber-700 flex-1 leading-4">
-                  This shift was automatically timed out because a punch-out was
-                  missed.
-                </Text>
-              </View>
+              <Animated.View
+                entering={FadeInUp.duration(400).delay(20)}
+                className="rounded-3xl bg-white mb-4 px-5 py-4"
+                style={CARD_STYLE}
+              >
+                <View className="flex-row items-start">
+                  <View
+                    className="items-center justify-center rounded-full mr-3"
+                    style={{
+                      width: 32,
+                      height: 32,
+                      backgroundColor: withAlpha(themeColor, '1F'),
+                    }}
+                  >
+                    <AlertCircle
+                      color={themeColor}
+                      size={16}
+                      strokeWidth={2.25}
+                    />
+                  </View>
+                  <View className="flex-1">
+                    <Text className="text-[13px] font-bold text-slate-800">
+                      Need to fix your time out?
+                    </Text>
+                    <Text className="text-[12px] text-slate-500 leading-5 mt-0.5">
+                      You forgot to time out on this shift. Please ask your
+                      supervisor to update your DTR. You'll get a notification
+                      once it's corrected.
+                    </Text>
+                  </View>
+                </View>
+              </Animated.View>
             )}
           </Animated.View>
 
-          <DtrUpdateRequest
+          {/* <DtrUpdateRequest
             log={log}
             themeColor={themeColor}
             onSubmitted={() => refetch()}
-          />
-          
+          /> */}
+
           {/* A note that isn't tagged to a session */}
           {notes.general ? (
             <Animated.View

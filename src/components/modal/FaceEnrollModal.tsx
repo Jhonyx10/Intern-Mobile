@@ -22,6 +22,7 @@ const REQUIRED_BLINKS = 2;
 const WARMUP_MS = 1000; // ignore blinks while camera/face settle in
 const INTER_BLINK_TIMEOUT_MS = 5000; // must finish the 2nd blink within this long of the 1st
 const CHALLENGE_WINDOW_MS = 8000; // overall cap from "ready" to fully verified
+const AUTO_CAPTURE_DELAY_MS = 400; // short pause after the 2nd blink so the eyes are fully open
 
 const FaceEnrollModal = React.memo(
   ({
@@ -223,8 +224,11 @@ const FaceEnrollModal = React.memo(
 
         if (photo && photo.filePath) {
           const uri = `file://${photo.filePath}`;
-          // The parent handles upload success/failure and closes this modal.
-          await onEnrollRef.current(uri); // latest callback, not the stale one
+          // Hand the photo to the parent and return right away. The parent
+          // closes this modal and shows its own loading state while it verifies.
+          Promise.resolve(onEnrollRef.current(uri)).catch(err =>
+            console.warn('Punch handler threw:', err),
+          );
         }
       } catch (e: any) {
         // Only camera/capture failures land here; the parent's onEnroll
@@ -235,17 +239,39 @@ const FaceEnrollModal = React.memo(
             e?.message ?? ''
           }`.trim(),
         );
+
+        // With auto capture there is no button to press again, so restart the
+        // blink challenge to let the user retry.
+        blinkCountRef.current = 0;
+        eyeState.current = 'INITIAL';
+        interBlinkDeadline.current = null;
+        challengeStart.current = Date.now();
+        setBlinkCount(0);
       } finally {
         isCapturing.current = false;
       }
     };
 
+    // Auto capture: as soon as the blink challenge is passed, take the photo.
+    useEffect(() => {
+      if (!visible || !isVerified) return;
+
+      const captureTimer = setTimeout(() => {
+        handleCapture();
+      }, AUTO_CAPTURE_DELAY_MS);
+
+      return () => clearTimeout(captureTimer);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [visible, isVerified]);
+
     const statusText = !readyForChallenge
       ? 'Getting ready...'
       : timedOut
       ? "That took a bit long — let's try again."
+      : isEnrolling
+      ? 'Verifying your face...'
       : isVerified
-      ? 'Perfect! Face verified.'
+      ? 'Perfect! Capturing...'
       : `Position your face inside the guide and blink (${blinkCount}/${REQUIRED_BLINKS})`;
 
     return (
@@ -326,23 +352,11 @@ const FaceEnrollModal = React.memo(
               {statusText}
             </Text>
 
-            <Pressable
-              onPress={handleCapture}
-              disabled={isEnrolling || !isVerified}
-              className="items-center justify-center rounded-full py-4"
-              style={{
-                backgroundColor: themeColor,
-                opacity: isEnrolling || !isVerified ? 0.7 : 1,
-              }}
-            >
-              {isEnrolling ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text className="text-white font-bold text-base">
-                  {captureLabel}
-                </Text>
-              )}
-            </Pressable>
+            {(isVerified || isEnrolling) && (
+              <View className="items-center justify-center py-2">
+                <ActivityIndicator color={themeColor} size="large" />
+              </View>
+            )}
 
             <Pressable onPress={onClose} className="items-center py-3">
               <X color="#fff" size={24} />

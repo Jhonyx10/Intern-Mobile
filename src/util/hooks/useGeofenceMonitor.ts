@@ -18,17 +18,13 @@ const PUNCHED_IN_KEY = '@punched_in';
 const OUTSIDE_KEY = '@outside_geofence';
 const POLYGON_KEY = '@office_polygon';
 
-const HEARTBEAT_INTERVAL_SECONDS = 10;
+// No artificial delays: every fix is evaluated and reported as soon as it
+// arrives. (iOS may clamp the heartbeat to a longer interval; onLocation
+// is the primary path.)
+const HEARTBEAT_INTERVAL_SECONDS = 1;
 const OUTSIDE_TOO_LONG_MS = 3 * 60 * 1000; // 3 minutes
-// How long the intern must stay outside the polygon before we report the exit
-// and create the excursion. Filters out GPS jitter and quick step-outs.
-const EXIT_CONFIRM_DELAY_MS = 10 * 1000;
 // Ignore fixes less accurate than this when deciding inside/outside.
 const MAX_ACCURACY_METERS = 50;
-// Record one excursion point per heartbeat (every 10s). Set slightly under the
-// heartbeat interval so timing jitter never skips a beat, while still blocking
-// the extra onLocation fix that arrives when the intern is moving.
-const EXCURSION_POINT_INTERVAL_MS = 9 * 1000;
 
 // Make the reason modal react immediately instead of waiting for the next poll.
 const refreshPendingExcursions = () => {
@@ -42,15 +38,19 @@ let activeExcursionId: string | number | null = null;
 let isInsideGeofence = true; // assume inside until a location fix says otherwise
 let isPunchedIn = false; // gates whether anything is reported
 let outsideTimer: ReturnType<typeof setTimeout> | null = null;
-let exitConfirmTimer: ReturnType<typeof setTimeout> | null = null;
 let exitReported = false; // true once the exit was sent to the server (excursion created)
+// Resolves when the in-flight exit report (server calls) has finished, so an
+// immediate re-entry can wait for the excursion id before completing it.
+let exitInFlight: Promise<void> | null = null;
 let isOnBreak = false; // true between break_out and break_in: no excursions, no alerts
 // The company's geofence_polygon ring ([lng, lat] pairs). This is the ONLY thing
 // that decides inside/outside. No radius is used anywhere.
 let officePolygon: number[][] | null = null;
 let lastCoords: { latitude: number; longitude: number } | null = null;
-// Timestamp of the last recorded excursion point, used to throttle recording.
-let lastExcursionPointAt = 0;
+// Fix de-duplication. The heartbeat and onLocation can deliver the same fix,
+// and there's no time throttle anymore, so skip a fix we've already sent.
+let lastLiveFixTs: string | number | null = null;
+let lastPointFixTs: string | number | null = null;
 // Promoted from useRef so they survive component remounts (e.g. navigation).
 let isRegistered = false;
 let isStarting = false;
@@ -177,23 +177,16 @@ function clearOutsideTimer() {
     }
 }
 
-function clearExitConfirmTimer() {
-    if (exitConfirmTimer !== null) {
-        clearTimeout(exitConfirmTimer);
-        exitConfirmTimer = null;
-    }
-}
-
 /**
- * Sends the exit to the server and creates the excursion. Only called after
- * the intern has stayed outside the polygon for EXIT_CONFIRM_DELAY_MS.
+ * Sends the exit to the server and creates the excursion. Called immediately
+ * when the intern leaves the polygon.
  *
  *   POST /intern/time/geofence-event  -> records the exit (server also opens the excursion)
  *   POST /intern/excursions           -> creates / returns the ongoing excursion
  */
-async function reportConfirmedExit(exitedAtIso: string) {
+async function reportExit(exitedAtIso: string) {
     exitReported = true;
-    console.log('[geofence] exit confirmed, creating excursion');
+    console.log('[geofence] exit detected, creating excursion');
 
     try {
         await api.post('/intern/time/geofence-event', {
@@ -214,7 +207,6 @@ async function reportConfirmedExit(exitedAtIso: string) {
             // Record the first point right away so the map always has the
             // location where the intern was when the excursion was created.
             if (lastCoords) {
-                lastExcursionPointAt = Date.now();
                 addExcursionPoint(
                     excursion.id,
                     lastCoords.latitude,
@@ -231,22 +223,17 @@ async function reportConfirmedExit(exitedAtIso: string) {
     refreshPendingExcursions();
 }
 
-function scheduleExitReport() {
-    clearExitConfirmTimer(); // guard against double-start
-    const exitedAtIso = new Date().toISOString(); // keep the real exit time
-
-    exitConfirmTimer = setTimeout(async () => {
-        exitConfirmTimer = null;
-        // Still outside and still punched in? Then it's a real excursion.
-        if (!isInsideGeofence && isPunchedIn && !isOnBreak) {
-            await reportConfirmedExit(exitedAtIso);
-        }
-    }, EXIT_CONFIRM_DELAY_MS);
+/** Starts the exit report and tracks it so handleEnter can wait for it. */
+function startExitReport(exitedAtIso: string) {
+    const p = reportExit(exitedAtIso).finally(() => {
+        if (exitInFlight === p) exitInFlight = null;
+    });
+    exitInFlight = p;
+    return p;
 }
 
 /**
- * The intern just left the polygon. Nothing is sent yet: we wait
- * EXIT_CONFIRM_DELAY_MS first, so a brief blip never creates an excursion.
+ * The intern just left the polygon. Reported to the server immediately.
  */
 function handleExit() {
     console.log('[geofence] exit detected');
@@ -254,7 +241,7 @@ function handleExit() {
     persistOutside(true);
 
     if (isPunchedIn && !isOnBreak) {
-        scheduleExitReport();
+        startExitReport(new Date().toISOString());
         // 3-minute "outside too long" alert; only fires if still outside.
         startOutsideTimer();
     }
@@ -269,14 +256,19 @@ async function handleEnter() {
     persistOutside(false);
     clearOutsideTimer(); // intern returned in time — cancel the alert
 
-    // Back before the exit was confirmed: it was a brief blip.
-    // The exit was never sent, so don't send an entry either.
-    if (!exitReported) {
-        clearExitConfirmTimer();
-        return;
+    // Nothing was reported (e.g. exit happened during a break): nothing to close.
+    if (!exitReported) return;
+
+    // If the exit is still being sent, wait for it so activeExcursionId is set
+    // and we complete the right excursion.
+    if (exitInFlight) {
+        try {
+            await exitInFlight;
+        } catch { /* already logged inside reportExit */ }
     }
+
     exitReported = false;
-    lastExcursionPointAt = 0; // next excursion starts its own point cadence
+    lastPointFixTs = null; // next excursion starts its own point trail
 
     try {
         await api.post('/intern/time/geofence-event', {
@@ -329,13 +321,12 @@ export function setGeofenceOnBreak(onBreak: boolean) {
 
     if (onBreak) {
         // Break started: cancel anything pending and close an open excursion.
-        clearExitConfirmTimer();
         clearOutsideTimer();
 
         const openId = activeExcursionId;
         activeExcursionId = null;
         exitReported = false;
-        lastExcursionPointAt = 0;
+        lastPointFixTs = null;
         AsyncStorage.removeItem(EXCURSION_ID_KEY).catch(() => { });
         if (openId !== null) {
             completeExcursion(openId)
@@ -348,9 +339,9 @@ export function setGeofenceOnBreak(onBreak: boolean) {
     }
 
     // Break ended while still outside: the afternoon session starts now,
-    // so treat it as a fresh exit and run the usual confirmation delay.
+    // so treat it as a fresh exit and report it immediately.
     if (!isInsideGeofence && isPunchedIn) {
-        scheduleExitReport();
+        startExitReport(new Date().toISOString());
         startOutsideTimer();
     }
 }
@@ -386,6 +377,9 @@ const checkPolygonTransition = (location: Location) => {
 
 const reportLiveLocation = async (location: Location) => {
     if (!isPunchedIn || isInsideGeofence) return; // only while outside
+    // Same fix delivered by both heartbeat and onLocation: send it once.
+    if (location.timestamp === lastLiveFixTs) return;
+    lastLiveFixTs = location.timestamp;
     try {
         await api.post('/intern/intern-location', {
             latitude: location.coords.latitude,
@@ -398,16 +392,14 @@ const reportLiveLocation = async (location: Location) => {
 };
 
 /**
- * Records one point per EXCURSION_POINT_INTERVAL_MS while an excursion is open.
- * Called from both the heartbeat and onLocation (and their headless
- * equivalents); the throttle keeps them from double-recording.
+ * Records one point per fix while an excursion is open. No time throttle;
+ * the timestamp check only stops the same fix being recorded twice when the
+ * heartbeat and onLocation both deliver it.
  */
 const recordExcursionPointIfOutside = async (location: Location) => {
     if (isInsideGeofence || activeExcursionId === null) return;
-
-    const now = Date.now();
-    if (now - lastExcursionPointAt < EXCURSION_POINT_INTERVAL_MS) return;
-    lastExcursionPointAt = now; // set before the await so parallel calls can't double-fire
+    if (location.timestamp === lastPointFixTs) return;
+    lastPointFixTs = location.timestamp; // set before the await so parallel calls can't double-fire
 
     try {
         await addExcursionPoint(
@@ -459,10 +451,11 @@ export function useGeoFenceListeners() {
             recordExcursionPointIfOutside(location);
         };
 
-        // Fires on movement — detects polygon transitions and adds to the
-        // excursion trail while outside (throttled with the heartbeat).
+        // Fires on every fix — detects polygon transitions, sends the live
+        // location, and adds to the excursion trail while outside.
         const onLocation = (location: Location) => {
             checkPolygonTransition(location);
+            reportLiveLocation(location);
             recordExcursionPointIfOutside(location);
         };
 
@@ -475,7 +468,9 @@ export function useGeoFenceListeners() {
         BackgroundGeolocation.ready({
             reset: false, // don't clobber config on every app launch
             desiredAccuracy: DesiredAccuracy.High,
-            distanceFilter: 10, // meters of movement before onLocation fires
+            distanceFilter: 0, // fire on every fix, no minimum movement
+            locationUpdateInterval: 1000, // Android: request a fix every 1s
+            fastestLocationUpdateInterval: 1000,
             heartbeatInterval: HEARTBEAT_INTERVAL_SECONDS,
             stopTimeout: 0, // don't auto-stop tracking when the device is stationary
 
@@ -543,9 +538,9 @@ export function useGeofenceControls() {
             persistPunchedIn(false);
             persistOutside(false);
             clearOutsideTimer(); // always cancel the alert when punching out
-            clearExitConfirmTimer(); // punched out before the exit was confirmed: no excursion
             exitReported = false;
-            lastExcursionPointAt = 0;
+            lastLiveFixTs = null;
+            lastPointFixTs = null;
             isInsideGeofence = true; // fresh start for the next shift
             isRegistered = false;
             // Clear the restore flag so next punch-in starts fresh.

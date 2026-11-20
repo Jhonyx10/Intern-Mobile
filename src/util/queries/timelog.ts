@@ -3,6 +3,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
 import { api } from '../api';
 
+export type SessionPeriod = 'early' | 'on_time' | 'late';
+
 interface Geofence {
     required: boolean;
     enabled: boolean;
@@ -28,6 +30,7 @@ interface TodayAttendance {
     hours: number;
     is_scheduled_today: boolean;
     schedule_label: string;
+    schedule_time_in: string | null;
     absence_id: number | null;
     needs_justification: boolean;
 }
@@ -91,6 +94,12 @@ interface TimeLogsPage {
     logs: TimeLogEntry[];
     total_count: number;
     page: number;
+}
+
+export interface FileAbsencePayload {
+    absence_date: string; // YYYY-MM-DD
+    reason: string;
+    proof?: { uri: string; name: string; type: string } | null;
 }
 
 const TIME_LOGS_PER_PAGE = 20;
@@ -296,5 +305,31 @@ export const useTimeLogDetail = (timeLogId: number | null) => {
             return data.log;
         },
         enabled: timeLogId != null,
+    });
+};
+
+export const useFileAbsence = () => {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: async (payload: FileAbsencePayload) => {
+            const formData = new FormData();
+            formData.append('absence_date', payload.absence_date);
+            formData.append('reason', payload.reason.trim());
+
+            if (payload.proof) {
+                formData.append('proof', payload.proof as any);
+            }
+
+            const { data } = await api.post('/intern/absences', formData, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+            });
+            return data;
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['time_status'] });
+            queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+            queryClient.invalidateQueries({ queryKey: ['absences'] });
+        },
     });
 };

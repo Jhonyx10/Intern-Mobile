@@ -5,11 +5,13 @@ import {
   ScrollView,
   ActivityIndicator,
   Pressable,
+  Modal,
 } from 'react-native';
 import Animated, { FadeInUp, FadeInDown } from 'react-native-reanimated';
 import {
   CheckCircle2,
   AlertCircle,
+  CalendarX,
   Coffee,
   LogIn,
   LogOut,
@@ -33,6 +35,7 @@ import { saveToQueue, syncOfflineQueue } from '../util/offlineQueue';
 import NetInfo from '@react-native-community/netinfo';
 import { useToast } from '../components/ToastProvider';
 import ConfirmModal from '../components/modal/ConfirmModal';
+import FileAbsenceModal from '../components/modal/FileAbsenceModal';
 import { useLiveLocation } from '../util/hooks/useLiveLocation';
 import {
   withAlpha,
@@ -61,6 +64,29 @@ import {
 import { useOfflineSync } from '../components/OfflineSyncProvider';
 import { getOfflineQueue } from '../util/offlineQueue';
 
+const ABSENCE_GRACE_MINUTES = 5; // show "File an absence" once this far past time in
+
+const SESSION_META: Record<string, { label: string; color: string }> = {
+  early: { label: 'Early', color: '#2563EB' },
+  on_time: { label: 'On time', color: '#059669' },
+  late: { label: 'Late', color: '#DC2626' },
+};
+
+// Accepts "09:00" or "09:00 AM" and returns that time today
+function timeTodayFrom(value?: string | null): Date | null {
+  if (!value) return null;
+  const m = value.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+  if (!m) return null;
+  let h = parseInt(m[1], 10);
+  const min = parseInt(m[2], 10);
+  const mer = m[3]?.toUpperCase();
+  if (mer === 'PM' && h < 12) h += 12;
+  if (mer === 'AM' && h === 12) h = 0;
+  const d = new Date();
+  d.setHours(h, min, 0, 0);
+  return d;
+}
+
 export default function TimeLogs() {
   const navigation =
     useNavigation<NativeStackNavigationProp<RootStackParamList>>();
@@ -78,6 +104,19 @@ export default function TimeLogs() {
   const [confirmBreakAction, setConfirmBreakAction] = useState<
     'break_out' | 'break_in' | null
   >(null);
+  const [absenceModalVisible, setAbsenceModalVisible] = useState(false);
+  // Drives the "Verifying your face..." overlay shown after the camera closes
+  const [verifyingAction, setVerifyingAction] = useState<
+    'time_in' | 'time_out' | null
+  >(null);
+
+  // Ticking clock so the absence button appears on its own without a refresh
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 30 * 1000);
+    return () => clearInterval(id);
+  }, []);
 
   // Global excursion context — the modal itself is rendered at the app root.
   // Geofence monitoring also runs at the app root (GeofenceAutoMonitor), so
@@ -238,8 +277,23 @@ export default function TimeLogs() {
   };
 
   const onCameraCapture = async (imageUri: string) => {
-    if (cameraMode === 'punch_in') return handlePunch(imageUri, 'time_in');
-    if (cameraMode === 'punch_out') return handlePunch(imageUri, 'time_out');
+    const action =
+      cameraMode === 'punch_in'
+        ? 'time_in'
+        : cameraMode === 'punch_out'
+        ? 'time_out'
+        : null;
+    if (!action) return;
+
+    // Close the camera immediately and show the loading state on this page.
+    setCameraMode(null);
+    setVerifyingAction(action);
+
+    try {
+      await handlePunch(imageUri, action);
+    } finally {
+      setVerifyingAction(null);
+    }
   };
 
   if (isLoading) {
@@ -281,11 +335,11 @@ export default function TimeLogs() {
 
   let isInternshipStarted = true;
   if (schedule?.start_date) {
-    const now = new Date();
-    now.setHours(0, 0, 0, 0);
+    const startNow = new Date();
+    startNow.setHours(0, 0, 0, 0);
     const startDate = new Date(schedule.start_date);
     startDate.setHours(0, 0, 0, 0);
-    isInternshipStarted = now >= startDate;
+    isInternshipStarted = startNow >= startDate;
   }
 
   let punchInDisabled = false;
@@ -396,6 +450,43 @@ export default function TimeLogs() {
     navigation.navigate('UpdateTask', {
       timeLogId: status.open_log.id,
     });
+
+  const needsJustification = Boolean(
+    status.today_attendance?.needs_justification,
+  );
+  const absenceColor = needsJustification ? '#D97706' : themeColor;
+
+  const scheduledTimeIn = timeTodayFrom(
+    status.today_attendance?.schedule_time_in ?? schedule?.time_in,
+  );
+
+  // No schedule known -> keep the button visible rather than hide it.
+  const pastGracePeriod = scheduledTimeIn
+    ? now.getTime() >=
+      scheduledTimeIn.getTime() + ABSENCE_GRACE_MINUTES * 60 * 1000
+    : true;
+
+  // Any punch today (open or already closed) means he is not absent.
+  const hasTimedIn = Boolean(
+    status.open_log?.time_in || status.today_segments?.length > 0,
+  );
+
+  // Show only when past the grace period AND no time in yet.
+  // A detected absence that still needs justification always shows the button.
+  const showAbsenceButton =
+    needsJustification || (pastGracePeriod && !hasTimedIn);
+
+  const sessionMeta = timelineEntry?.session_period
+    ? SESSION_META[timelineEntry.session_period] ?? null
+    : null;
+
+  const openAbsenceModal = () => {
+    if (!isOnline) {
+      showToast('You need an internet connection to file an absence.', 'info');
+      return;
+    }
+    setAbsenceModalVisible(true);
+  };
 
   return (
     <>
@@ -567,6 +658,24 @@ export default function TimeLogs() {
                 value={`${status.today_hours} hrs (${status.today_minutes} min)`}
                 last
               />
+
+              {showAbsenceButton && (
+                <Pressable
+                  onPress={openAbsenceModal}
+                  className="flex-row items-center justify-center py-3.5"
+                  style={{ borderTopWidth: 1, borderTopColor: LINE }}
+                >
+                  <CalendarX color={absenceColor} size={16} strokeWidth={2} />
+                  <Text
+                    className="font-semibold text-[14px] ml-2"
+                    style={{ color: absenceColor }}
+                  >
+                    {needsJustification
+                      ? 'Justify your absence'
+                      : 'File an absence'}
+                  </Text>
+                </Pressable>
+              )}
             </Panel>
           </Section>
 
@@ -576,6 +685,12 @@ export default function TimeLogs() {
             entering={FadeInUp.duration(500).delay(350).springify()}
           >
             <Panel>
+              <DetailRow
+                label="Session"
+                value={sessionMeta?.label ?? '—'}
+                valueColor={sessionMeta?.color}
+                dotColor={sessionMeta?.color}
+              />
               <DetailRow
                 label="Morning time in"
                 value={formatLogTime(timelineEntry?.time_in)}
@@ -720,6 +835,41 @@ export default function TimeLogs() {
           setConfirmBreakAction(null);
         }}
       />
+
+      <FileAbsenceModal
+        visible={absenceModalVisible}
+        onClose={() => setAbsenceModalVisible(false)}
+        themeColor={themeColor}
+      />
+
+      {/* Verifying overlay: shown after the camera closes while the punch uploads */}
+      <Modal
+        visible={verifyingAction !== null}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => {}} // block back button while verifying
+      >
+        <View className="flex-1 items-center justify-center bg-black/50 px-8">
+          <View className="bg-white rounded-3xl px-8 py-7 items-center w-full max-w-xs">
+            <ActivityIndicator size="large" color={themeColor} />
+            <Text
+              className="text-[16px] font-bold mt-4 text-center"
+              style={{ color: INK }}
+            >
+              Verifying your face...
+            </Text>
+            <Text
+              className="text-[13px] mt-1.5 text-center"
+              style={{ color: MUTED }}
+            >
+              {verifyingAction === 'time_in'
+                ? 'Recording your time in'
+                : 'Recording your time out'}
+            </Text>
+          </View>
+        </View>
+      </Modal>
     </>
   );
 }

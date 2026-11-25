@@ -22,25 +22,24 @@ import {
   Download,
   ChevronLeft,
   ChevronRight,
+  CloudOff,
   X,
 } from 'lucide-react-native';
 import { Calendar } from 'react-native-calendars';
-import { addWeeks, isSameWeek } from 'date-fns';
+import { addWeeks, addDays, format, isSameWeek } from 'date-fns';
 
 import ConfirmModal from '../components/modal/ConfirmModal';
 import ExportDtrModal from '../components/modal/ExportDtrModal';
 import PdfPreviewModal from '../components/modal/PdfPreviewModal';
 import ScreenHeader from '../components/ScreenHeader';
 import HeaderIconButton from '../components/HeaderIconButton';
+import OfflineShiftsView from '../components/OfflineShiftsView';
 
 import { RootStackParamList } from '../components/Navigation';
-import {
-  useTimeLogsHistory,
-  TimeLogEntry,
-  TimeLogPreset,
-} from '../util/queries/timelog';
+import { useTimeLogsHistory, TimeLogEntry } from '../util/queries/timelog';
 import { useUser } from '../util/queries/auth';
 import { useDashboard } from '../util/queries/dashboard';
+import { useOfflineShifts } from '../util/offlineShift';
 import { formatLogTime } from '../util/timeLogHelpers';
 import { parseTaskNote } from '../util/taskNote';
 import { PAGE_BG, LINE, INK, MUTED, Panel } from '../components/ScreenKit';
@@ -58,6 +57,8 @@ import {
 // DTR export (PDF + CSV) used by the export modal
 import { exportDtrPdf, exportDtrCsv, DtrStudent } from '../util/ExportDtr';
 import { DateRange } from '../util/dtrRange';
+
+type CustomRange = { start: string; end: string };
 
 function formatLogDate(iso: string | null) {
   if (!iso) return 'Unknown date';
@@ -86,12 +87,36 @@ function formatDayLabel(dateStr: string) {
   });
 }
 
-const PRESETS: { key: TimeLogPreset; label: string }[] = [
-  { key: 'daily', label: 'Daily' },
-  { key: 'weekly', label: 'Weekly' },
-  { key: 'monthly', label: 'Monthly' },
-  { key: 'yearly', label: 'Yearly' },
-];
+// ('2026-10-12', '2026-10-18') -> "Oct 12 – Oct 18, 2026"
+function formatRangeLabel(start: string, end: string) {
+  const s = new Date(start + 'T00:00:00');
+  const e = new Date(end + 'T00:00:00');
+  const endText = e.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+  if (start === end) return endText;
+  const sameYear = s.getFullYear() === e.getFullYear();
+  const startText = s.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    ...(sameYear ? {} : { year: 'numeric' }),
+  });
+  return `${startText} – ${endText}`;
+}
+
+// Every 'YYYY-MM-DD' from start to end, inclusive
+function datesBetween(start: string, end: string): string[] {
+  const out: string[] = [];
+  let cur = new Date(start + 'T00:00:00');
+  const last = new Date(end + 'T00:00:00');
+  while (cur <= last) {
+    out.push(format(cur, 'yyyy-MM-dd'));
+    cur = addDays(cur, 1);
+  }
+  return out;
+}
 
 // One half of the day (morning / afternoon) inside the log card
 function SessionColumn({ label, range }: { label: string; range: string }) {
@@ -108,6 +133,42 @@ function SessionColumn({ label, range }: { label: string; range: string }) {
         {range}
       </Text>
     </View>
+  );
+}
+
+// Labeled button used in the header's action row
+function HeaderPill({
+  label,
+  onPress,
+  disabled,
+  loading,
+  style,
+  children,
+}: {
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+  loading?: boolean;
+  style?: React.ComponentProps<typeof Pressable>['style'];
+  children: React.ReactNode;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityLabel={label}
+      className="flex-1 flex-row items-center justify-center rounded-2xl py-3"
+      style={[
+        {
+          backgroundColor: 'rgba(255,255,255,0.15)',
+          opacity: disabled ? 0.5 : 1,
+        },
+        style as any,
+      ]}
+    >
+      {loading ? <ActivityIndicator color="#fff" size="small" /> : children}
+      <Text className="text-white text-[13px] font-semibold ml-2">{label}</Text>
+    </Pressable>
   );
 }
 
@@ -249,8 +310,12 @@ export default function Reports() {
   const { data: userData } = useUser();
   const { data: dashboard } = useDashboard();
   const themeColor = userData?.settings?.theme_color || '#1D4ED8';
-  const [preset, setPreset] = useState<TimeLogPreset>('daily');
   const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list');
+
+  // Offline shifts saved on this device (waiting to be uploaded)
+  const [showOffline, setShowOffline] = useState(false);
+  const { done: offlineShifts } = useOfflineShifts();
+
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [dateModalOpen, setDateModalOpen] = useState(false);
   const [infoModal, setInfoModal] = useState<{
@@ -259,8 +324,17 @@ export default function Reports() {
     message: string;
   }>({ visible: false, title: '', message: '' });
 
-  // Weekly PDF report state
+  // Selected week (drives the list and the weekly PDF)
   const [weekStart, setWeekStart] = useState<Date>(getWeekStart());
+  const isCurrentWeek = isSameWeek(weekStart, new Date(), { weekStartsOn: 1 });
+
+  // Optional custom date range. When set it replaces the week for the list.
+  const [customRange, setCustomRange] = useState<CustomRange | null>(null);
+  const [rangeModalOpen, setRangeModalOpen] = useState(false);
+  const [draftStart, setDraftStart] = useState<string | null>(null);
+  const [draftEnd, setDraftEnd] = useState<string | null>(null);
+
+  // Weekly PDF report state
   const [exportingPdf, setExportingPdf] = useState(false);
   // Generated PDF waiting in the preview modal (not shared/saved yet)
   const [pdfPreview, setPdfPreview] = useState<{
@@ -268,7 +342,6 @@ export default function Reports() {
     fileName: string;
   } | null>(null);
   const [openingPdf, setOpeningPdf] = useState(false);
-  const isCurrentWeek = isSameWeek(weekStart, new Date(), { weekStartsOn: 1 });
 
   // DTR export modal state
   const [exportModalOpen, setExportModalOpen] = useState(false);
@@ -276,8 +349,8 @@ export default function Reports() {
 
   const isCalendar = viewMode === 'calendar';
 
-  // List view honours the Daily/Weekly/... filter. Calendar view needs every
-  // log (so past days are marked), so it loads without a preset.
+  // Single unfiltered history query. Filtering by week / range happens on
+  // the client, so every page is loaded.
   const {
     data,
     isLoading,
@@ -287,36 +360,107 @@ export default function Reports() {
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
-  } = useTimeLogsHistory(isCalendar ? undefined : preset);
+  } = useTimeLogsHistory(undefined);
 
-  // Unfiltered query used by both exports, so any week or date range is
-  // complete no matter which list filter is selected.
-  const exportQuery = useTimeLogsHistory(undefined);
-
-  // In calendar mode, keep loading pages until every log is in
+  // Keep loading pages until every log is in
   useEffect(() => {
-    if (isCalendar && hasNextPage && !isFetchingNextPage) {
+    if (hasNextPage && !isFetchingNextPage) {
       fetchNextPage();
     }
-  }, [isCalendar, hasNextPage, isFetchingNextPage, fetchNextPage]);
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
-  const logs = data?.pages.flatMap(p => p.logs) ?? [];
-  const totalCount = data?.pages[0]?.total_count ?? 0;
+  const allFetchedLogs = data?.pages.flatMap(p => p.logs) ?? [];
+
+  // List: custom range if set, otherwise the selected week.
+  // Calendar: everything, so every day with logs gets a dot.
+  const periodLogs = customRange
+    ? allFetchedLogs.filter(l => {
+        const d = formatISODate(l.time_in);
+        return d >= customRange.start && d <= customRange.end;
+      })
+    : filterLogsToWeek(allFetchedLogs, weekStart);
+
+  const logs = isCalendar ? allFetchedLogs : periodLogs;
+  const totalCount = logs.length;
   const totalHours = logs.reduce((acc, l) => acc + (l.duration_hours ?? 0), 0);
+  const loadingAll = hasNextPage || isFetchingNextPage;
 
-  // Loads every page of the unfiltered history
+  // Loads every page of the history (used by both exports)
   const loadAllLogs = async () => {
-    let pages = exportQuery.data?.pages ?? [];
-    let more = !!exportQuery.hasNextPage;
+    let pages = data?.pages ?? [];
+    let more = !!hasNextPage;
     while (more) {
-      const res = await exportQuery.fetchNextPage();
+      const res = await fetchNextPage();
       pages = res.data?.pages ?? pages;
       more = !!res.hasNextPage;
     }
     return pages.flatMap(p => p.logs);
   };
 
-  // Button 2, step 1: build the weekly report PDF and show it in the preview
+  // ---- Week selector / date range ----
+
+  const todayStr = format(new Date(), 'yyyy-MM-dd');
+
+  const goToWeek = (delta: number) => {
+    setCustomRange(null); // arrows always go back to week mode
+    setWeekStart(w => addWeeks(w, delta));
+  };
+
+  const openRangePicker = () => {
+    if (customRange) {
+      setDraftStart(customRange.start);
+      setDraftEnd(customRange.end);
+    } else {
+      // Start from the currently selected week (clamped to today)
+      const weekEnd = format(addDays(weekStart, 6), 'yyyy-MM-dd');
+      setDraftStart(format(weekStart, 'yyyy-MM-dd'));
+      setDraftEnd(weekEnd > todayStr ? todayStr : weekEnd);
+    }
+    setRangeModalOpen(true);
+  };
+
+  const closeRangePicker = () => setRangeModalOpen(false);
+
+  const handleRangeDayPress = (dateString: string) => {
+    if (!draftStart || (draftStart && draftEnd)) {
+      // Start a new range
+      setDraftStart(dateString);
+      setDraftEnd(null);
+    } else if (dateString < draftStart) {
+      // Tapped before the start: restart from this day
+      setDraftStart(dateString);
+    } else {
+      setDraftEnd(dateString);
+    }
+  };
+
+  const applyRange = () => {
+    if (!draftStart) return;
+    setCustomRange({ start: draftStart, end: draftEnd ?? draftStart });
+    setRangeModalOpen(false);
+  };
+
+  const clearRange = () => {
+    setCustomRange(null);
+    setRangeModalOpen(false);
+  };
+
+  const rangeMarkedDates: any = {};
+  if (draftStart) {
+    const days = datesBetween(draftStart, draftEnd ?? draftStart);
+    days.forEach((d, i) => {
+      rangeMarkedDates[d] = {
+        startingDay: i === 0,
+        endingDay: i === days.length - 1,
+        color: themeColor,
+        textColor: '#ffffff',
+      };
+    });
+  }
+
+  // ---- Exports ----
+
+  // Weekly PDF, step 1: build the weekly report PDF and show it in the preview
   const handleExportWeeklyPDF = async () => {
     try {
       setExportingPdf(true);
@@ -367,7 +511,7 @@ export default function Reports() {
     }
   };
 
-  // Button 2, step 2: the user approved the preview, so save / share it
+  // Weekly PDF, step 2: the user approved the preview, so save / share it
   const handleOpenPreviewedPdf = async () => {
     if (!pdfPreview) return;
     try {
@@ -387,7 +531,7 @@ export default function Reports() {
     }
   };
 
-  // Button 3: DTR export (PDF or CSV) for a chosen date range
+  // DTR export (PDF or CSV) for a chosen date range
   const handleExportDtr = async (
     type: 'pdf' | 'csv',
     range: DateRange | null,
@@ -423,7 +567,8 @@ export default function Reports() {
     }
   };
 
-  // Calendar marked dates
+  // ---- Calendar view ----
+
   const markedDates: any = {};
   if (isCalendar) {
     logs.forEach(log => {
@@ -456,13 +601,22 @@ export default function Reports() {
 
   const closeDateModal = () => setDateModalOpen(false);
 
-  const headerSubtitle = isCalendar
-    ? 'Tap a date to see its time logs'
+  const periodWord = customRange ? 'range' : 'week';
+
+  // Kept short so it fits on one line next to the header buttons
+  const headerSubtitle = showOffline
+    ? `${offlineShifts.length} shift(s) on this device`
+    : isCalendar
+    ? 'Tap a date to see its logs'
     : totalCount > 0
     ? `${totalCount} ${
         totalCount === 1 ? 'entry' : 'entries'
-      }, ${totalHours.toFixed(1)} hrs rendered`
-    : 'No entries for this period';
+      } · ${totalHours.toFixed(1)} hrs`
+    : `No entries for this ${periodWord}`;
+
+  const periodLabel = customRange
+    ? formatRangeLabel(customRange.start, customRange.end)
+    : formatWeekLabel(weekStart);
 
   return (
     <View style={{ flex: 1, backgroundColor: PAGE_BG }}>
@@ -472,7 +626,7 @@ export default function Reports() {
         subtitle={headerSubtitle}
         actions={
           <>
-            {/* 1. Toggle list / calendar */}
+            {/* Toggle list / calendar */}
             <HeaderIconButton
               onPress={() =>
                 setViewMode(prev => (prev === 'list' ? 'calendar' : 'list'))
@@ -488,92 +642,129 @@ export default function Reports() {
               )}
             </HeaderIconButton>
 
-            {/* 2. Weekly report PDF (builds it, then opens the preview) */}
+            {/* Toggle offline saved shifts */}
             <HeaderIconButton
-              onPress={handleExportWeeklyPDF}
-              disabled={exportingPdf}
-              accessibilityLabel="Preview weekly report"
+              onPress={() => setShowOffline(v => !v)}
+              accessibilityLabel={
+                showOffline ? 'Show online reports' : 'Show offline shifts'
+              }
             >
-              {exportingPdf ? (
-                <ActivityIndicator color="#fff" size="small" />
-              ) : (
-                <FileText color="#fff" size={19} strokeWidth={2} />
+              <CloudOff
+                color={showOffline ? '#FDE68A' : '#fff'}
+                size={19}
+                strokeWidth={2}
+              />
+              {offlineShifts.length > 0 && (
+                <View
+                  style={{
+                    position: 'absolute',
+                    top: -2,
+                    right: -2,
+                    minWidth: 16,
+                    height: 16,
+                    borderRadius: 8,
+                    backgroundColor: '#EF4444',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Text
+                    style={{ color: '#fff', fontSize: 10, fontWeight: '700' }}
+                  >
+                    {offlineShifts.length}
+                  </Text>
+                </View>
               )}
-            </HeaderIconButton>
-
-            {/* 3. Export DTR (opens the modal) */}
-            <HeaderIconButton
-              onPress={() => setExportModalOpen(true)}
-              accessibilityLabel="Export daily time record"
-            >
-              <Download color="#fff" size={19} strokeWidth={2} />
             </HeaderIconButton>
           </>
         }
       >
-        {/* Week selector for the weekly PDF report */}
-        <View
-          className="flex-row items-center justify-between rounded-2xl px-2 py-1.5 mt-5"
-          style={{ backgroundColor: 'rgba(255,255,255,0.15)' }}
-        >
-          <Pressable
-            onPress={() => setWeekStart(w => addWeeks(w, -1))}
-            accessibilityLabel="Previous week"
-            className="p-2"
-          >
-            <ChevronLeft color="#fff" size={18} />
-          </Pressable>
-          <View className="items-center">
-            <Text
-              className="text-[11px] font-medium"
-              style={{ color: 'rgba(255,255,255,0.75)' }}
+        {!showOffline && (
+          <>
+            {/* Week selector. Tap the date to pick a custom range instead. */}
+            <View
+              className="flex-row items-center justify-between rounded-2xl px-2 py-2 mt-6"
+              style={{ backgroundColor: 'rgba(255,255,255,0.15)' }}
             >
-              Weekly report
-            </Text>
-            <Text className="text-white text-[13px] font-bold">
-              {formatWeekLabel(weekStart)}
-            </Text>
-          </View>
-          <Pressable
-            onPress={() => setWeekStart(w => addWeeks(w, 1))}
-            disabled={isCurrentWeek}
-            accessibilityLabel="Next week"
-            className="p-2"
-            style={{ opacity: isCurrentWeek ? 0.3 : 1 }}
-          >
-            <ChevronRight color="#fff" size={18} />
-          </Pressable>
-        </View>
-
-        {/* Preset toggle (list view only) */}
-        {!isCalendar && (
-          <View
-            className="flex-row rounded-2xl p-1 mt-3"
-            style={{ backgroundColor: 'rgba(255,255,255,0.15)' }}
-          >
-            {PRESETS.map(({ key, label }) => (
               <Pressable
-                key={key}
-                onPress={() => setPreset(key)}
-                className="flex-1 items-center justify-center rounded-xl py-2"
-                style={preset === key ? { backgroundColor: '#fff' } : undefined}
+                onPress={() => goToWeek(-1)}
+                accessibilityLabel="Previous week"
+                className="p-2.5"
               >
-                <Text
-                  className="text-[13px] font-semibold"
-                  style={{
-                    color:
-                      preset === key ? themeColor : 'rgba(255,255,255,0.85)',
-                  }}
-                >
-                  {label}
-                </Text>
+                <ChevronLeft color="#fff" size={18} />
               </Pressable>
-            ))}
-          </View>
+
+              <View className="items-center">
+                <Text
+                  className="text-[11px] font-medium"
+                  style={{ color: 'rgba(255,255,255,0.75)' }}
+                >
+                  {customRange ? 'Custom range' : 'Selected week'}
+                </Text>
+                <View className="flex-row items-center mt-0.5">
+                  <Pressable
+                    onPress={openRangePicker}
+                    accessibilityLabel="Choose a date range"
+                    className="flex-row items-center"
+                  >
+                    <Text className="text-white text-[14px] font-bold">
+                      {periodLabel}
+                    </Text>
+                    <View className="ml-1.5">
+                      <CalendarIcon color="#fff" size={13} strokeWidth={2} />
+                    </View>
+                  </Pressable>
+                  {customRange && (
+                    <Pressable
+                      onPress={clearRange}
+                      accessibilityLabel="Clear custom range"
+                      hitSlop={10}
+                      className="ml-2 rounded-full p-0.5"
+                      style={{ backgroundColor: 'rgba(255,255,255,0.25)' }}
+                    >
+                      <X color="#fff" size={12} strokeWidth={2.5} />
+                    </Pressable>
+                  )}
+                </View>
+              </View>
+
+              <Pressable
+                onPress={() => goToWeek(1)}
+                disabled={isCurrentWeek}
+                accessibilityLabel="Next week"
+                className="p-2.5"
+                style={{ opacity: isCurrentWeek ? 0.3 : 1 }}
+              >
+                <ChevronRight color="#fff" size={18} />
+              </Pressable>
+            </View>
+
+            {/* Export actions. Weekly PDF is per-week, so it is off in range mode. */}
+            <View className="flex-row mt-3">
+              <HeaderPill
+                label="Weekly PDF"
+                onPress={handleExportWeeklyPDF}
+                disabled={exportingPdf || customRange !== null}
+                loading={exportingPdf}
+              >
+                <FileText color="#fff" size={17} strokeWidth={2} />
+              </HeaderPill>
+              <HeaderPill
+                label="Export DTR"
+                onPress={() => setExportModalOpen(true)}
+                style={{ marginLeft: 10 }}
+              >
+                <Download color="#fff" size={17} strokeWidth={2} />
+              </HeaderPill>
+            </View>
+          </>
         )}
       </ScreenHeader>
 
-      {isLoading ? (
+      {showOffline ? (
+        // ---- OFFLINE SAVED SHIFTS ----
+        <OfflineShiftsView themeColor={themeColor} />
+      ) : isLoading ? (
         <View className="flex-1 items-center justify-center">
           <ActivityIndicator size="large" color={themeColor} />
         </View>
@@ -592,7 +783,7 @@ export default function Reports() {
           </Pressable>
         </View>
       ) : !isCalendar ? (
-        // ---- LIST VIEW ----
+        // ---- LIST VIEW (selected week or custom range) ----
         <FlatList
           data={logs}
           keyExtractor={item => String(item.id)}
@@ -624,28 +815,26 @@ export default function Reports() {
               colors={[themeColor]}
             />
           }
-          onEndReachedThreshold={0.4}
-          onEndReached={() => {
-            if (hasNextPage && !isFetchingNextPage) fetchNextPage();
-          }}
           ListFooterComponent={
-            isFetchingNextPage ? (
+            loadingAll ? (
               <View className="py-6">
                 <ActivityIndicator color={themeColor} />
               </View>
             ) : undefined
           }
           ListEmptyComponent={
-            <View className="items-center justify-center py-20">
-              <BarChart2 color="#CBD5E1" size={48} />
-              <Text className="text-slate-400 text-center text-sm mt-4">
-                No entries for this period.
-              </Text>
-            </View>
+            loadingAll ? undefined : (
+              <View className="items-center justify-center py-20">
+                <BarChart2 color="#CBD5E1" size={48} />
+                <Text className="text-slate-400 text-center text-sm mt-4">
+                  No entries for this {periodWord}.
+                </Text>
+              </View>
+            )
           }
         />
       ) : (
-        // ---- CALENDAR VIEW ----
+        // ---- CALENDAR VIEW (all logs) ----
         <ScrollView
           contentContainerStyle={{
             paddingHorizontal: 20,
@@ -677,7 +866,7 @@ export default function Reports() {
             />
           </Panel>
 
-          {(hasNextPage || isFetchingNextPage) && (
+          {loadingAll && (
             <View className="flex-row items-center justify-center mt-4">
               <ActivityIndicator size="small" color={themeColor} />
               <Text className="ml-2 text-[12px]" style={{ color: MUTED }}>
@@ -698,7 +887,7 @@ export default function Reports() {
         </ScrollView>
       )}
 
-      {/* Day details modal */}
+      {/* Day details modal (calendar view) */}
       <Modal
         visible={dateModalOpen}
         animationType="slide"
@@ -760,6 +949,90 @@ export default function Reports() {
                 ))
               )}
             </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Custom date range picker */}
+      <Modal
+        visible={rangeModalOpen}
+        animationType="slide"
+        transparent
+        statusBarTranslucent
+        onRequestClose={closeRangePicker}
+      >
+        <View className="flex-1 justify-end">
+          <Pressable
+            className="absolute inset-0 bg-black/50"
+            onPress={closeRangePicker}
+          />
+          <View className="bg-white rounded-t-3xl p-6">
+            <View className="flex-row justify-between items-center">
+              <View className="flex-1 pr-3">
+                <Text className="text-lg font-bold text-slate-900">
+                  Select date range
+                </Text>
+                <Text className="text-xs text-slate-500 mt-0.5">
+                  {!draftStart
+                    ? 'Tap a start date, then an end date'
+                    : !draftEnd
+                    ? `${formatDayLabel(draftStart)} · tap an end date`
+                    : formatRangeLabel(draftStart, draftEnd)}
+                </Text>
+              </View>
+              <Pressable onPress={closeRangePicker} className="p-1">
+                <X size={20} color="#64748B" />
+              </Pressable>
+            </View>
+
+            <View className="mt-3">
+              <Calendar
+                current={draftStart ?? undefined}
+                maxDate={todayStr}
+                markingType="period"
+                markedDates={rangeMarkedDates}
+                onDayPress={(day: any) => handleRangeDayPress(day.dateString)}
+                theme={{
+                  calendarBackground: '#ffffff',
+                  textSectionTitleColor: '#64748b',
+                  todayTextColor: themeColor,
+                  dayTextColor: '#0f172a',
+                  textDisabledColor: '#cbd5e1',
+                  arrowColor: themeColor,
+                  monthTextColor: '#0f172a',
+                  textMonthFontWeight: 'bold',
+                }}
+              />
+            </View>
+
+            <View className="flex-row mt-4">
+              <Pressable
+                onPress={clearRange}
+                className="flex-1 items-center justify-center rounded-2xl py-3.5"
+                style={{ backgroundColor: PAGE_BG }}
+              >
+                <Text
+                  className="text-[14px] font-semibold"
+                  style={{ color: INK }}
+                >
+                  Use weekly view
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={applyRange}
+                disabled={!draftStart}
+                className="flex-1 items-center justify-center rounded-2xl py-3.5"
+                style={{
+                  backgroundColor: themeColor,
+                  marginLeft: 10,
+                  opacity: draftStart ? 1 : 0.5,
+                }}
+              >
+                <Text className="text-white text-[14px] font-semibold">
+                  Apply
+                </Text>
+              </Pressable>
+            </View>
           </View>
         </View>
       </Modal>

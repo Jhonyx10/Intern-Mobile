@@ -20,6 +20,9 @@ import {
   ChevronRight,
   ScanFace,
   ShieldAlert,
+  WifiOff,
+  CloudOff,
+  RefreshCw,
 } from 'lucide-react-native';
 import Animated, { FadeInUp } from 'react-native-reanimated';
 import Geolocation from '@react-native-community/geolocation';
@@ -97,7 +100,14 @@ async function requestLocationPermission(): Promise<boolean> {
 }
 
 export default function Home() {
-  const { data: dashboard, isLoading, isError, refetch } = useDashboard();
+  const {
+    data: dashboard,
+    isLoading,
+    isError,
+    isFetching,
+    error,
+    refetch,
+  } = useDashboard();
   const { data: userData } = useUser();
   const { mutateAsync: requestCompany, isPending: isSubmittingRequest } =
     useRequestCompany();
@@ -239,18 +249,110 @@ export default function Home() {
     );
   }
 
-  if (isError || !dashboard) {
-    return (
-      <View
-        className="flex-1 items-center justify-center px-8"
-        style={{ backgroundColor: PAGE_BG }}
+if (isError || !dashboard) {
+  // No response from the server at all means the phone is offline or the server is unreachable
+  const isNetworkError = !(error as any)?.response;
+
+  const ErrorIcon = isNetworkError ? WifiOff : CloudOff;
+  const errorTitle = isNetworkError
+    ? 'No internet connection'
+    : 'Something went wrong';
+  const errorMessage = isNetworkError
+    ? "We couldn't reach the server. Check your Wi-Fi or mobile data, then try again."
+    : "We couldn't load your dashboard right now. Please try again in a moment.";
+
+  return (
+    <View
+      className="flex-1 items-center justify-center px-6"
+      style={{ backgroundColor: PAGE_BG }}
+    >
+      <Animated.View
+        entering={FadeInUp.duration(500).springify()}
+        className="w-full items-center"
+        style={{
+          maxWidth: 380,
+          borderRadius: 24,
+          backgroundColor: '#fff',
+          paddingHorizontal: 24,
+          paddingTop: 32,
+          paddingBottom: 24,
+          borderWidth: 1,
+          borderColor: LINE,
+          shadowColor: '#0F172A',
+          shadowOpacity: 0.08,
+          shadowRadius: 18,
+          shadowOffset: { width: 0, height: 8 },
+          elevation: 4,
+        }}
       >
-        <Text className="text-center text-base" style={{ color: MUTED }}>
-          Unable to load your dashboard. Please try again.
+        {/* Icon with a soft halo */}
+        <View
+          className="items-center justify-center rounded-full"
+          style={{
+            width: 96,
+            height: 96,
+            backgroundColor: withAlpha(themeColor, '12'),
+          }}
+        >
+          <View
+            className="items-center justify-center rounded-full"
+            style={{
+              width: 68,
+              height: 68,
+              backgroundColor: withAlpha(themeColor, '1F'),
+            }}
+          >
+            <ErrorIcon color={themeColor} size={32} strokeWidth={2} />
+          </View>
+        </View>
+
+        <Text
+          className="text-[18px] font-bold mt-6 text-center"
+          style={{ color: INK }}
+        >
+          {errorTitle}
         </Text>
-      </View>
-    );
-  }
+        <Text
+          className="text-[14px] mt-2 text-center leading-5"
+          style={{ color: MUTED }}
+        >
+          {errorMessage}
+        </Text>
+
+        <Pressable
+          onPress={() => refetch()}
+          disabled={isFetching}
+          className="mt-7 w-full flex-row items-center justify-center rounded-2xl py-3.5"
+          style={{
+            backgroundColor: themeColor,
+            opacity: isFetching ? 0.7 : 1,
+          }}
+        >
+          {isFetching ? (
+            <ActivityIndicator color="#fff" size="small" />
+          ) : (
+            <>
+              <RefreshCw color="#fff" size={16} strokeWidth={2.2} />
+              <Text className="text-white font-bold text-[14px] ml-2">
+                Try again
+              </Text>
+            </>
+          )}
+        </Pressable>
+
+        {isNetworkError && (
+          <Text
+            className="text-[12px] mt-4 text-center leading-5"
+            style={{ color: MUTED }}
+          >
+            You can still record a time in or out from the Time logs tab.
+            Offline shifts are saved on your device.
+          </Text>
+        )}
+      </Animated.View>
+    </View>
+  );
+}
 
   const {
     student,

@@ -13,12 +13,18 @@ import { Settings } from '../pages/Settings'
 import { TimeLogHistory } from '../pages/TimeLogHistory';
 import TimeLogDetails from '../pages/TimeLogDetails';
 import Notifications from '../pages/Notifications';
+import OfflineShiftDetails from '../pages/OfflineShiftDetails';
 
 export type RootStackParamList = {
   Login: undefined;
   ForgotPassword: undefined;
   Main: undefined;
-  UpdateTask: { timeLogId: number };
+  UpdateTask: {
+    timeLogId: number | null;
+    offline?: boolean;
+    session?: 'morning' | 'afternoon';
+  };
+  OfflineShiftDetails: { shiftId: string };
   MyEvaluation: undefined;
   Settings: undefined;
   TimeLogHistory: undefined;
@@ -69,6 +75,10 @@ export default function RootNavigator() {
               name="TimeLogDetails"
               component={TimeLogDetails}
               options={{ presentation: 'card' }}
+            />
+            <Stack.Screen
+              name="OfflineShiftDetails"
+              component={OfflineShiftDetails}
             />
             <Stack.Screen
               name="Notifications"

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Text,
   View,
@@ -30,7 +30,6 @@ import {
 import { useDashboard } from '../util/queries/dashboard';
 import { useUser } from '../util/queries/auth';
 import GeofenceMap from '../components/GeofenceMap';
-import { saveToQueue, syncOfflineQueue } from '../util/offlineQueue';
 import NetInfo from '@react-native-community/netinfo';
 import { useToast } from '../components/ToastProvider';
 import ConfirmModal from '../components/modal/ConfirmModal';
@@ -43,6 +42,14 @@ import {
   PunchPhase,
   PUNCH_META,
 } from '../util/timeLogHelpers';
+import {
+  useOfflineShifts,
+  applyOfflineShifts,
+  getActiveShift,
+  startOfflineShift,
+  recordOfflineBreak,
+  finishOfflineShift,
+} from '../util/offlineShift';
 
 import StatusBadge from '../components/timelogs/StatusBadge';
 import FaceEnrollModal from '../components/modal/FaceEnrollModal';
@@ -59,9 +66,6 @@ import {
   Panel,
   DetailRow,
 } from '../components/ScreenKit';
-
-import { useOfflineSync } from '../components/OfflineSyncProvider';
-import { getOfflineQueue } from '../util/offlineQueue';
 
 const ABSENCE_GRACE_MINUTES = 5; // show "File an absence" once this far past time in
 
@@ -89,25 +93,23 @@ function timeTodayFrom(value?: string | null): Date | null {
 export default function TimeLogs() {
   const navigation =
     useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const { isSyncing } = useOfflineSync();
   const { showToast } = useToast();
-  const { data: serverStatus, isLoading, isError, refetch } = useTimeStatus();
+  const { data: serverStatus, isLoading, refetch } = useTimeStatus();
   const { data: dashboard } = useDashboard();
   const { data: userData } = useUser();
   const { mutateAsync: timePunch, isPending: isPunching } = useTimePunch();
   const themeColor = userData?.settings?.theme_color || '#1D4ED8';
-  const [cameraMode, setCameraMode] = useState<
-    'punch_in' | 'punch_out' | 'break_out' | 'break_in' | null
-  >(null);
+  // Only the morning time in needs the camera. Time out is automatic.
+  const [cameraMode, setCameraMode] = useState<'punch_in' | null>(null);
   const [taskNoteModalVisible, setTaskNoteModalVisible] = useState(false);
   const [confirmBreakAction, setConfirmBreakAction] = useState<
     'break_out' | 'break_in' | null
   >(null);
   const [absenceModalVisible, setAbsenceModalVisible] = useState(false);
   // Drives the "Verifying your face..." overlay shown after the camera closes
-  const [verifyingAction, setVerifyingAction] = useState<
-    'time_in' | 'time_out' | null
-  >(null);
+  const [verifyingAction, setVerifyingAction] = useState<'time_in' | null>(
+    null,
+  );
 
   // Ticking clock so the absence button appears on its own without a refresh
   const [now, setNow] = useState(() => new Date());
@@ -117,9 +119,6 @@ export default function TimeLogs() {
     return () => clearInterval(id);
   }, []);
 
-  // Global excursion context — the modal itself is rendered at the app root.
-  // Geofence monitoring also runs at the app root (GeofenceAutoMonitor), so
-  // nothing here needs to start or stop it.
   const { pendingCount: pendingExcursionCount, openFirstPending } =
     useExcursion();
 
@@ -129,10 +128,7 @@ export default function TimeLogs() {
   const { userLocation, locationError, setUserLocation } =
     useLiveLocation(isClockedIn);
 
-  // Offline Queue Merging
-  const [offlineQueue, setOfflineQueue] = useState<any[]>([]);
   const [isOnline, setIsOnline] = useState(true);
-
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener(state => {
       setIsOnline(Boolean(state.isConnected));
@@ -140,43 +136,15 @@ export default function TimeLogs() {
     return () => unsubscribe();
   }, []);
 
-  useEffect(() => {
-    const fetchQueue = async () => {
-      const q = await getOfflineQueue();
-      setOfflineQueue(q);
-    };
-    fetchQueue();
-    const interval = setInterval(fetchQueue, 2000);
-    return () => clearInterval(interval);
-  }, []);
+  // Shifts recorded on this device (in progress + waiting for upload)
+  const { active: activeShift, done: doneShifts } = useOfflineShifts();
 
-  let status: any = serverStatus;
-  if (!isOnline && status && offlineQueue.length > 0) {
-    status = JSON.parse(JSON.stringify(serverStatus)); // deep clone; serverStatus already confirmed truthy above, so this can't be null
-    const lastPunch = offlineQueue[offlineQueue.length - 1];
-    if (lastPunch.action === 'time_in') {
-      status.open_log = {
-        time_in: lastPunch.timestamp,
-        break_out: null,
-        break_in: null,
-        time_out: null,
-      };
-      status.today_segments = [];
-    } else if (lastPunch.action === 'time_out') {
-      if (status.open_log) status.open_log.time_out = lastPunch.timestamp;
-    } else if (lastPunch.action === 'break_out') {
-      if (status.open_log) {
-        status.open_log.break_out = lastPunch.timestamp;
-        status.open_log.break_in = null;
-      }
-    } else if (lastPunch.action === 'break_in') {
-      if (status.open_log) status.open_log.break_in = lastPunch.timestamp;
-    }
-  }
+  const status: any = useMemo(
+    () => applyOfflineShifts(serverStatus, activeShift, doneShifts),
+    [serverStatus, activeShift, doneShifts],
+  );
 
   const isRemoved = status?.placement_status === 'removed';
-  // Drives whether the "Update Task Note & Photos" button/reminder shows at all.
-  // Only checked while there's an open log — a closed day has nothing to nudge.
   const openLogId: number | null = status?.open_log?.id ?? null;
   const { data: taskChecker } = useTaskChecker(openLogId);
 
@@ -188,114 +156,134 @@ export default function TimeLogs() {
       ? isPointInPolygon(userLocation, polygonCoords)
       : !isGeofenceActive;
 
+  const closeModals = () => {
+    setCameraMode(null);
+    setTaskNoteModalVisible(false);
+  };
+
+  // Records the punch on this device. Nothing is sent to the server.
+  const handleOfflinePunch = async (
+    action: 'time_in' | 'time_out' | 'break_out' | 'break_in',
+    imageUri: string | null,
+    timestamp: string,
+  ) => {
+    try {
+      if (action === 'time_in') {
+        await startOfflineShift({ image: imageUri, timestamp });
+      } else if (action === 'break_out' || action === 'break_in') {
+        await recordOfflineBreak(action, timestamp);
+      } else {
+        await finishOfflineShift({ image: imageUri, timestamp });
+      }
+      showToast(
+        action === 'time_out'
+          ? 'Shift saved on this device. Upload it from Reports when you have internet.'
+          : 'Saved on this device.',
+        'info',
+      );
+    } catch (e: any) {
+      showToast(e?.message ?? 'Could not save offline.', 'error');
+    } finally {
+      closeModals();
+    }
+  };
+
   const handlePunch = async (
     imageUri: string | null,
     action: 'time_in' | 'time_out' | 'break_out' | 'break_in',
   ) => {
-    const latitude = userLocation?.[1] ?? 0;
-    const longitude = userLocation?.[0] ?? 0;
-    const record: any = {
-      action,
-      image: imageUri,
-      latitude,
-      longitude,
-      timestamp: new Date().toISOString(),
-    };
+    // Covers both the online and offline paths, even if the button state is stale
+    if (action === 'time_in' && getMissedShift()) {
+      closeModals();
+      showToast(MISSED_SHIFT_MESSAGE, 'error');
+      return;
+    }
 
-    const netState = await NetInfo.fetch();
+    const timestamp = new Date().toISOString();
+    const net = await NetInfo.fetch();
+    const local = await getActiveShift(); // a shift started offline stays offline until time out
 
-    if (!netState.isConnected) {
-      await saveToQueue(record);
-      setCameraMode(null);
-      setTaskNoteModalVisible(false);
-      showToast(
-        'No internet connection. Saved locally and will sync when online.',
-        'info',
-      );
+    if (!net.isConnected || local) {
+      if (!local && action !== 'time_in') {
+        closeModals();
+        showToast(
+          'This shift started online. Reconnect to continue it.',
+          'error',
+        );
+        return;
+      }
+      await handleOfflinePunch(action, imageUri, timestamp);
       return;
     }
 
     try {
-      // useTimePunch's onSuccess invalidates time_status and task_checker,
-      // so the task note button re-enables itself after Break In.
-      const res = await timePunch(record);
-      setCameraMode(null);
-      setTaskNoteModalVisible(false);
+      const res = await timePunch({
+        action,
+        image: imageUri,
+        latitude: userLocation?.[1] ?? 0,
+        longitude: userLocation?.[0] ?? 0,
+        timestamp,
+      });
+      closeModals();
       showToast(res?.message ?? 'Action completed successfully!', 'success');
-      syncOfflineQueue(timePunch, (record, msg) => {
+    } catch (e: any) {
+      if (e?.response?.status) {
+        closeModals();
         showToast(
-          `Offline punch (${record.action}) couldn't be synced: ${msg}`,
+          e.response?.data?.message ??
+            'That action could not be completed. Please check the details and try again.',
           'error',
         );
-      });
-    } catch (e: any) {
-      setCameraMode(null);
-      setTaskNoteModalVisible(false);
-
-      if (e?.response?.status) {
-        const msg =
-          e.response?.data?.message ??
-          'That action could not be completed. Please check the details and try again.';
-        showToast(msg, 'error');
-
-        if (action === 'time_out' && e.response.status === 422) {
-          refetch();
-        }
+        if (action === 'time_out' && e.response.status === 422) refetch();
         return;
       }
-
-      // No response at all — genuine network/server-unreachable case.
-      await saveToQueue(record);
-      showToast(
-        'Server unreachable. Your punch has been saved locally.',
-        'error',
-      );
+      // Server unreachable: a new shift can still be recorded locally
+      if (action === 'time_in') {
+        await handleOfflinePunch(action, imageUri, timestamp);
+      } else {
+        closeModals();
+        showToast('Server unreachable. Please try again.', 'error');
+      }
     }
   };
 
   const handleActionPress = (
     action: 'break_out' | 'break_in' | 'punch_out',
   ) => {
-    if (isSyncing) {
-      showToast('Syncing in progress. Please wait a moment.', 'info');
+    // Final time out: no face check. Outside the geofence it still asks for a
+    // task note first, then times out automatically.
+    if (action === 'punch_out') {
+      if (!isInGeofence) {
+        setTaskNoteModalVisible(true);
+      } else {
+        handlePunch(null, 'time_out');
+      }
       return;
     }
-    if ((action === 'break_out' || action === 'break_in') && !isInGeofence) {
+
+    if (!isInGeofence) {
       setConfirmBreakAction(action);
       return;
     }
-    if (action === 'punch_out' && !isInGeofence) {
-      setTaskNoteModalVisible(true);
-      return;
-    }
-    if (action === 'punch_out') {
-      setCameraMode('punch_out');
-    } else {
-      handlePunch(null, action);
-    }
+    handlePunch(null, action);
   };
 
+  // Only the morning time in uses the camera
   const onCameraCapture = async (imageUri: string) => {
-    const action =
-      cameraMode === 'punch_in'
-        ? 'time_in'
-        : cameraMode === 'punch_out'
-        ? 'time_out'
-        : null;
-    if (!action) return;
+    if (cameraMode !== 'punch_in') return;
 
-    // Close the camera immediately and show the loading state on this page.
     setCameraMode(null);
-    setVerifyingAction(action);
+    setVerifyingAction('time_in');
 
     try {
-      await handlePunch(imageUri, action);
+      await handlePunch(imageUri, 'time_in');
     } finally {
       setVerifyingAction(null);
     }
   };
 
-  if (isLoading) {
+  // Only block the screen when there is no data at all (cached data still renders)
+  if (isLoading && !status) {
     return (
       <View
         className="flex-1 items-center justify-center"
@@ -306,7 +294,7 @@ export default function TimeLogs() {
     );
   }
 
-  if (isError || !status) {
+  if (!status) {
     return (
       <View
         className="flex-1 items-center justify-center px-8"
@@ -327,7 +315,20 @@ export default function TimeLogs() {
     );
   }
 
-  const punchPhase = getPunchPhase(status);
+  // Offline shifts decide their own phase; online ones use your existing helper
+  const todayStr = new Date().toDateString();
+  const finishedOfflineToday = doneShifts.some(
+    s => new Date(s.time_in).toDateString() === todayStr,
+  );
+  const punchPhase: PunchPhase = activeShift
+    ? !activeShift.break_out
+      ? 'break_out'
+      : !activeShift.break_in
+      ? 'break_in'
+      : 'punch_out'
+    : finishedOfflineToday && !serverStatus?.open_log
+    ? 'done'
+    : getPunchPhase(status);
 
   const schedule = dashboard?.progress?.schedule;
   const isScheduleSet = Boolean(schedule?.time_in && schedule?.time_out);
@@ -362,25 +363,17 @@ export default function TimeLogs() {
     punch_in: {
       label: 'Time In',
       icon: LogIn,
-      disabled: punchInDisabled || isSyncing,
-      hint: isSyncing ? 'Syncing...' : punchInHint,
-      onPress: () => {
-        if (isSyncing) {
-          showToast('Syncing in progress. Please wait a moment.', 'info');
-          return;
-        }
-        setCameraMode('punch_in');
-      },
+      disabled: punchInDisabled,
+      hint: isOnline ? punchInHint : `${punchInHint} (offline mode)`,
+      onPress: () => setCameraMode('punch_in'),
       color: themeColor,
     },
     break_out: {
       label: PUNCH_META.break_out.label, // "Time Out"
       period: PUNCH_META.break_out.period, // "morning"
       icon: Coffee,
-      disabled: isSyncing,
-      hint: isSyncing
-        ? 'Syncing...'
-        : !isInGeofence
+      disabled: false,
+      hint: !isInGeofence
         ? 'Fieldwork mode (Time out allowed)'
         : 'Tap to time out',
       onPress: () => handleActionPress('break_out'),
@@ -390,10 +383,8 @@ export default function TimeLogs() {
       label: PUNCH_META.break_in.label, // "Time In"
       period: PUNCH_META.break_in.period, // "afternoon"
       icon: Sunrise,
-      disabled: isSyncing,
-      hint: isSyncing
-        ? 'Syncing...'
-        : !isInGeofence
+      disabled: false,
+      hint: !isInGeofence
         ? 'Fieldwork mode (Time in allowed)'
         : 'Tap to resume work',
       onPress: () => handleActionPress('break_in'),
@@ -402,10 +393,8 @@ export default function TimeLogs() {
     punch_out: {
       label: 'Time Out',
       icon: LogOut,
-      disabled: isSyncing,
-      hint: isSyncing
-        ? 'Syncing...'
-        : !isInGeofence
+      disabled: false,
+      hint: !isInGeofence
         ? 'Fieldwork mode (Note required)'
         : 'Tap to time out',
       onPress: () => handleActionPress('punch_out'),
@@ -421,19 +410,37 @@ export default function TimeLogs() {
     },
   };
 
-  const punch = punchConfig[punchPhase];
-  const timelineEntry = status.open_log || status.today_segments?.[0];
+  const timelineEntry =
+    status.open_log ||
+    status.today_segments?.[status.today_segments.length - 1] ||
+    null;
 
-  // Task note/photo reminder: only meaningful while there's an open log to attach to.
-  // The server decides per session (morning before Break In, afternoon after it).
-  const taskNeedsUpdate =
-    Boolean(status?.open_log?.id) && Boolean(taskChecker?.needs_update);
+  // ---- Task note / photos ----
+  // Offline shift: the note is stored on the device, per session.
+  // Online shift: the server decides through the task checker.
+  const offlineSession: 'morning' | 'afternoon' | null = activeShift
+    ? activeShift.break_in
+      ? 'afternoon'
+      : 'morning'
+    : null;
 
-  // Session-aware labels
+  const taskNeedsUpdate = activeShift
+    ? !activeShift[offlineSession!]
+    : Boolean(status?.open_log?.id) && Boolean(taskChecker?.needs_update);
+
   const taskSessionLabel =
-    taskChecker?.session === 'afternoon' ? 'Afternoon' : 'Morning';
+    (offlineSession ?? taskChecker?.session) === 'afternoon'
+      ? 'Afternoon'
+      : 'Morning';
+
+  const showLoggedRow = activeShift
+    ? !taskNeedsUpdate
+    : Boolean(status?.open_log?.id) &&
+      Boolean(taskChecker) &&
+      !taskChecker?.needs_update;
 
   const loggedLabel = (() => {
+    if (activeShift) return 'Task note saved on this device';
     if (taskChecker?.morning_done && taskChecker?.afternoon_done) {
       return 'Morning & afternoon task notes logged';
     }
@@ -446,9 +453,12 @@ export default function TimeLogs() {
   const geofenceConfigured = Boolean(status?.geofence?.configured);
 
   const openUpdateTask = () =>
-    navigation.navigate('UpdateTask', {
-      timeLogId: status.open_log.id,
-    });
+    navigation.navigate(
+      'UpdateTask',
+      activeShift
+        ? { timeLogId: null, offline: true, session: offlineSession! }
+        : { timeLogId: status.open_log.id },
+    );
 
   const needsJustification = Boolean(
     status.today_attendance?.needs_justification,
@@ -459,19 +469,42 @@ export default function TimeLogs() {
     status.today_attendance?.schedule_time_in ?? schedule?.time_in,
   );
 
-  // No schedule known -> keep the button visible rather than hide it.
   const pastGracePeriod = scheduledTimeIn
     ? now.getTime() >=
       scheduledTimeIn.getTime() + ABSENCE_GRACE_MINUTES * 60 * 1000
     : true;
 
-  // Any punch today (open or already closed) means he is not absent.
-  const hasTimedIn = Boolean(
-    status.open_log?.time_in || status.today_segments?.length > 0,
-  );
+  // Any punch today (online, or saved on this device) means not absent
+  const hasTimedIn =
+    Boolean(status.open_log?.time_in || status.today_segments?.length > 0) ||
+    Boolean(activeShift) ||
+    finishedOfflineToday;
 
-  // Show only when past the grace period AND no time in yet.
-  // A detected absence that still needs justification always shows the button.
+  // ---- Punch blocking ----
+  // Blocked only when the scheduled time out has passed and the intern never timed in.
+  // Uses a fresh clock reading so it is accurate on press, online or offline.
+  const getMissedShift = () => {
+    const scheduledTimeOut = timeTodayFrom(
+      status.today_attendance?.schedule_time_out ?? schedule?.time_out,
+    );
+    if (!scheduledTimeOut) return false;
+    return Date.now() >= scheduledTimeOut.getTime() && !hasTimedIn;
+  };
+
+  const missedShift = getMissedShift();
+  const MISSED_SHIFT_MESSAGE = 'Shift ended. You did not time in today.';
+
+  const basePunch = punchConfig[punchPhase];
+  const punch =
+    missedShift && punchPhase === 'punch_in'
+      ? {
+          ...basePunch,
+          disabled: true,
+          hint: MISSED_SHIFT_MESSAGE,
+          onPress: () => {},
+        }
+      : basePunch;
+
   const showAbsenceButton =
     needsJustification || (pastGracePeriod && !hasTimedIn);
 
@@ -500,7 +533,6 @@ export default function TimeLogs() {
         />
 
         <View className="px-5" style={{ marginTop: -56 }}>
-          {/* The main action floats over the header */}
           {status.face_enrolled && isRemoved && (
             <Animated.View
               entering={FadeInUp.duration(500).delay(200).springify()}
@@ -546,6 +578,41 @@ export default function TimeLogs() {
           )}
 
           {/* Notices */}
+          {activeShift && (
+            <Animated.View entering={FadeInUp.duration(400)} className="mt-4">
+              <Panel accent="#2563EB">
+                <View className="flex-row items-center p-4">
+                  <AlertCircle color="#2563EB" size={18} />
+                  <Text
+                    className="ml-3 flex-1 text-[13px] leading-5"
+                    style={{ color: INK }}
+                  >
+                    Offline shift in progress. It is saved on this device and
+                    can be uploaded from Reports after you time out.
+                  </Text>
+                </View>
+              </Panel>
+            </Animated.View>
+          )}
+
+          {doneShifts.length > 0 && (
+            <Animated.View entering={FadeInUp.duration(400)} className="mt-4">
+              <Panel accent="#D97706">
+                <View className="flex-row items-center p-4">
+                  <AlertCircle color="#D97706" size={18} />
+                  <Text
+                    className="ml-3 flex-1 text-[13px] leading-5"
+                    style={{ color: INK }}
+                  >
+                    {doneShifts.length} offline shift
+                    {doneShifts.length > 1 ? 's' : ''} waiting to be saved
+                    online. Open Reports and tap the cloud icon.
+                  </Text>
+                </View>
+              </Panel>
+            </Animated.View>
+          )}
+
           {locationError && (
             <Animated.View entering={FadeInUp.duration(400)} className="mt-4">
               <Panel accent="#DC2626">
@@ -590,7 +657,7 @@ export default function TimeLogs() {
             </Animated.View>
           )}
 
-          {taskNeedsUpdate && (
+          {Boolean(status?.open_log) && taskNeedsUpdate && (
             <Animated.View entering={FadeInUp.duration(400)} className="mt-4">
               <Panel accent="#D97706">
                 <View className="flex-row items-center p-4">
@@ -600,8 +667,10 @@ export default function TimeLogs() {
                       className="text-[13px] leading-5"
                       style={{ color: INK }}
                     >
-                      {taskChecker?.message ??
-                        `Don't forget to log your ${taskSessionLabel.toLowerCase()} task note and photo(s).`}
+                      {activeShift
+                        ? `Don't forget to log your ${taskSessionLabel.toLowerCase()} task note and photo(s).`
+                        : taskChecker?.message ??
+                          `Don't forget to log your ${taskSessionLabel.toLowerCase()} task note and photo(s).`}
                     </Text>
                     <Pressable onPress={openUpdateTask}>
                       <Text
@@ -689,7 +758,7 @@ export default function TimeLogs() {
                 last
               />
 
-              {status?.open_log?.id && taskNeedsUpdate && (
+              {Boolean(status?.open_log) && taskNeedsUpdate && (
                 <Pressable
                   onPress={openUpdateTask}
                   className="flex-row items-center justify-center py-3.5"
@@ -705,22 +774,20 @@ export default function TimeLogs() {
                 </Pressable>
               )}
 
-              {status?.open_log?.id &&
-                taskChecker &&
-                !taskChecker.needs_update && (
-                  <View
-                    className="flex-row items-center justify-center py-3.5"
-                    style={{ borderTopWidth: 1, borderTopColor: LINE }}
+              {showLoggedRow && (
+                <View
+                  className="flex-row items-center justify-center py-3.5"
+                  style={{ borderTopWidth: 1, borderTopColor: LINE }}
+                >
+                  <CheckCircle2 color="#059669" size={16} />
+                  <Text
+                    className="ml-2 font-semibold text-[13px]"
+                    style={{ color: '#047857' }}
                   >
-                    <CheckCircle2 color="#059669" size={16} />
-                    <Text
-                      className="ml-2 font-semibold text-[13px]"
-                      style={{ color: '#047857' }}
-                    >
-                      {loggedLabel}
-                    </Text>
-                  </View>
-                )}
+                    {loggedLabel}
+                  </Text>
+                </View>
+              )}
             </Panel>
           </Section>
 
@@ -780,8 +847,9 @@ export default function TimeLogs() {
         visible={taskNoteModalVisible}
         onClose={() => setTaskNoteModalVisible(false)}
         onProceed={() => {
+          // No camera on time out: record it right after the note prompt
           setTaskNoteModalVisible(false);
-          setCameraMode('punch_out');
+          handlePunch(null, 'time_out');
         }}
         themeColor={themeColor}
       />
@@ -792,14 +860,8 @@ export default function TimeLogs() {
         onEnroll={onCameraCapture}
         isEnrolling={isPunching}
         themeColor={themeColor}
-        title={
-          cameraMode === 'punch_in'
-            ? 'Punch In — Face Verification'
-            : 'Punch Out — Face Verification'
-        }
-        captureLabel={
-          cameraMode === 'punch_in' ? 'Confirm Punch In' : 'Confirm Punch Out'
-        }
+        title="Punch In — Face Verification"
+        captureLabel="Confirm Punch In"
       />
 
       <ConfirmModal
@@ -822,13 +884,13 @@ export default function TimeLogs() {
         themeColor={themeColor}
       />
 
-      {/* Verifying overlay: shown after the camera closes while the punch uploads */}
+      {/* Verifying overlay (time in only) */}
       <Modal
         visible={verifyingAction !== null}
         transparent
         animationType="fade"
         statusBarTranslucent
-        onRequestClose={() => {}} // block back button while verifying
+        onRequestClose={() => {}}
       >
         <View className="flex-1 items-center justify-center bg-black/50 px-8">
           <View className="bg-white rounded-3xl px-8 py-7 items-center w-full max-w-xs">
@@ -837,15 +899,13 @@ export default function TimeLogs() {
               className="text-[16px] font-bold mt-4 text-center"
               style={{ color: INK }}
             >
-              Verifying your face...
+              {isOnline ? 'Verifying your face...' : 'Saving on this device...'}
             </Text>
             <Text
               className="text-[13px] mt-1.5 text-center"
               style={{ color: MUTED }}
             >
-              {verifyingAction === 'time_in'
-                ? 'Recording your time in'
-                : 'Recording your time out'}
+              Recording your time in
             </Text>
           </View>
         </View>

@@ -21,8 +21,7 @@ import {
   ScanFace,
   ShieldAlert,
 } from 'lucide-react-native';
-import Animated, { FadeInUp, FadeInDown } from 'react-native-reanimated';
-import LinearGradient from 'react-native-linear-gradient';
+import Animated, { FadeInUp } from 'react-native-reanimated';
 import Geolocation from '@react-native-community/geolocation';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import {
@@ -36,7 +35,6 @@ import {
   useNotifications,
   useMarkNotificationsSeen,
   useMarkReviewAlertsSeen,
-  useInAppNotifications,
 } from '../util/queries/notifications';
 import { useMyEvaluations } from '../util/queries/evaluation';
 import { useTimeStatus, useEnrollFace } from '../util/queries/timelog';
@@ -44,6 +42,7 @@ import FaceEnrollModal from '../components/modal/FaceEnrollModal';
 
 import { useUser } from '../util/queries/auth';
 import { useToast } from '../components/ToastProvider';
+import ScreenHeader from '../components/ScreenHeader';
 import {
   PAGE_BG,
   LINE,
@@ -153,12 +152,11 @@ export default function Home() {
   };
 
   // Notification Hooks
+  // (the unread badge on the header bell is handled inside <NotificationBell />)
   const { data: notificationsData, refetch: refetchNotifications } =
     useNotifications();
   const { mutateAsync: markSeen } = useMarkNotificationsSeen();
   const { mutateAsync: markReviewSeen } = useMarkReviewAlertsSeen();
-  const { data: inAppNotifications = [] } = useInAppNotifications();
-  const inAppUnreadCount = inAppNotifications.length;
   const [isNotificationModalOpen, setIsNotificationModalOpen] = useState(false);
 
   // Evaluation Hooks
@@ -389,83 +387,34 @@ export default function Home() {
         contentContainerStyle={{ paddingBottom: 106 }}
         showsVerticalScrollIndicator={false}
       >
-        {/* Header: gradient with who you are, nothing else */}
-        <Animated.View entering={FadeInDown.duration(400)}>
-          <LinearGradient
-            colors={[themeColor, withAlpha(themeColor, 'CC')]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={{
-              paddingTop: 56,
-              paddingBottom: 84,
-              paddingHorizontal: 20,
-              borderBottomLeftRadius: 32,
-              borderBottomRightRadius: 32,
-            }}
-          >
-            <View className="flex-row items-start justify-between">
-              <View className="flex-1 pr-4">
-                <Text
-                  className="text-[26px] font-bold text-white"
-                  numberOfLines={1}
-                >
-                  {fullName}
-                </Text>
-                <View className="flex-row items-center mt-1.5">
-                  <Text
-                    className="text-[13px]"
-                    style={{ color: 'rgba(255,255,255,0.8)' }}
-                  >
-                    {student?.section ?? 'N/A'}
-                  </Text>
-                  <View
-                    className="mx-2 rounded-full"
-                    style={{
-                      width: 3,
-                      height: 3,
-                      backgroundColor: 'rgba(255,255,255,0.55)',
-                    }}
-                  />
-                  <Text
-                    className="text-[13px]"
-                    style={{ color: 'rgba(255,255,255,0.8)' }}
-                  >
-                    {course?.code ?? 'N/A'}
-                  </Text>
-                </View>
-              </View>
-
-              <Pressable
-                onPress={() => navigation.navigate('Notifications')}
-                accessibilityLabel="Notifications"
-                className="items-center justify-center rounded-full"
-                style={{
-                  width: 42,
-                  height: 42,
-                  backgroundColor: 'rgba(255,255,255,0.18)',
-                }}
+        {/* Header: who you are + the notification bell */}
+        <ScreenHeader
+          title={fullName}
+          subtitle={
+            <View className="flex-row items-center mt-1.5">
+              <Text
+                className="text-[13px]"
+                style={{ color: 'rgba(255,255,255,0.8)' }}
               >
-                <Bell color="#fff" size={20} strokeWidth={2} />
-                {inAppUnreadCount > 0 && (
-                  <View
-                    className="absolute items-center justify-center rounded-full bg-red-500 border border-white"
-                    style={{
-                      top: -3,
-                      right: -3,
-                      minWidth: 17,
-                      height: 17,
-                      paddingHorizontal: 3,
-                    }}
-                  >
-                    <Text className="text-white text-[10px] font-bold">
-                      {inAppUnreadCount > 9 ? '9+' : inAppUnreadCount}
-                    </Text>
-                  </View>
-                )}
-              </Pressable>
+                {student?.section ?? 'N/A'}
+              </Text>
+              <View
+                className="mx-2 rounded-full"
+                style={{
+                  width: 3,
+                  height: 3,
+                  backgroundColor: 'rgba(255,255,255,0.55)',
+                }}
+              />
+              <Text
+                className="text-[13px]"
+                style={{ color: 'rgba(255,255,255,0.8)' }}
+              >
+                {course?.code ?? 'N/A'}
+              </Text>
             </View>
-          </LinearGradient>
-        </Animated.View>
+          }
+        />
 
         <View className="px-5">
           {/* Progress: the one thing this screen is about. It floats over the header. */}

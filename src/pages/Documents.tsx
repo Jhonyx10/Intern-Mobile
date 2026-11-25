@@ -9,7 +9,6 @@ import {
   StyleSheet,
 } from 'react-native';
 import Animated, {
-  FadeInDown,
   FadeInUp,
   LinearTransition,
   useSharedValue,
@@ -18,7 +17,6 @@ import Animated, {
   withSequence,
   withTiming,
 } from 'react-native-reanimated';
-import LinearGradient from 'react-native-linear-gradient';
 import {
   CheckCircle2,
   FileText,
@@ -38,6 +36,7 @@ import {
 } from '../util/queries/documents';
 import { useToast } from '../components/ToastProvider';
 import { PAGE_BG, LINE, INK, MUTED, Panel } from '../components/ScreenKit';
+import ScreenHeader from '../components/ScreenHeader';
 
 function withAlpha(hex: string, alpha: string) {
   return `${hex}${alpha}`;
@@ -151,7 +150,9 @@ export function getActionMeta(doc: DocumentItem) {
 // Shared by the tab bar / Home so the count is always consistent
 export const usePendingDocsCount = () => {
   const { data } = useDocuments();
-  return ((data as DocumentItem[]) ?? []).filter(d => getActionMeta(d)).length;
+  return ((data as DocumentItem[]) ?? []).filter(
+    d => (!d.recurrence || d.recurrence === 'none') && getActionMeta(d),
+  ).length;
 };
 
 // Coloured dot + text, same pattern as the status on Home and Reports
@@ -226,7 +227,9 @@ function ActionPill({ doc }: { doc: DocumentItem }) {
 }
 
 function ActionBanner({ docs }: { docs: DocumentItem[] }) {
-  const todo = docs.filter(d => getActionMeta(d));
+  const todo = docs.filter(
+    d => (!d.recurrence || d.recurrence === 'none') && getActionMeta(d),
+  );
   if (todo.length === 0) return null;
 
   const rejected = todo.filter(d => d.status === 'rejected').length;
@@ -537,29 +540,10 @@ export const Documents = () => {
         contentContainerStyle={{ paddingBottom: 110 }}
         showsVerticalScrollIndicator={false}
       >
-        {/* Header: same gradient as the other screens */}
-        <Animated.View entering={FadeInDown.duration(400)}>
-          <LinearGradient
-            colors={[themeColor, withAlpha(themeColor, 'CC')]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={{
-              paddingTop: 56,
-              paddingBottom: 84,
-              paddingHorizontal: 20,
-              borderBottomLeftRadius: 32,
-              borderBottomRightRadius: 32,
-            }}
-          >
-            <Text className="text-[26px] font-bold text-white">Documents</Text>
-            <Text
-              className="text-[13px] mt-1.5"
-              style={{ color: 'rgba(255,255,255,0.8)' }}
-            >
-              Manage and upload your required files
-            </Text>
-          </LinearGradient>
-        </Animated.View>
+        <ScreenHeader
+          title="Documents"
+          subtitle="Manage and upload your required files"
+        />
 
         <View className="px-5" style={{ marginTop: -56 }}>
           <ActionBanner docs={allDocs} />

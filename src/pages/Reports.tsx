@@ -9,8 +9,7 @@ import {
   Pressable,
   RefreshControl,
 } from 'react-native';
-import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
-import LinearGradient from 'react-native-linear-gradient';
+import Animated, { FadeInUp } from 'react-native-reanimated';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
@@ -31,6 +30,8 @@ import { addWeeks, isSameWeek } from 'date-fns';
 import ConfirmModal from '../components/modal/ConfirmModal';
 import ExportDtrModal from '../components/modal/ExportDtrModal';
 import PdfPreviewModal from '../components/modal/PdfPreviewModal';
+import ScreenHeader from '../components/ScreenHeader';
+import HeaderIconButton from '../components/HeaderIconButton';
 
 import { RootStackParamList } from '../components/Navigation';
 import {
@@ -40,7 +41,7 @@ import {
 } from '../util/queries/timelog';
 import { useUser } from '../util/queries/auth';
 import { useDashboard } from '../util/queries/dashboard';
-import { withAlpha, formatLogTime } from '../util/timeLogHelpers';
+import { formatLogTime } from '../util/timeLogHelpers';
 import { parseTaskNote } from '../util/taskNote';
 import { PAGE_BG, LINE, INK, MUTED, Panel } from '../components/ScreenKit';
 
@@ -465,153 +466,112 @@ export default function Reports() {
 
   return (
     <View style={{ flex: 1, backgroundColor: PAGE_BG }}>
-      {/* Header: same gradient as Home and Time logs */}
-      <Animated.View entering={FadeInDown.duration(400)}>
-        <LinearGradient
-          colors={[themeColor, withAlpha(themeColor, 'CC')]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={{
-            paddingTop: 56,
-            paddingBottom: 24,
-            paddingHorizontal: 20,
-            borderBottomLeftRadius: 32,
-            borderBottomRightRadius: 32,
-          }}
+      <ScreenHeader
+        compact
+        title="Reports"
+        subtitle={headerSubtitle}
+        actions={
+          <>
+            {/* 1. Toggle list / calendar */}
+            <HeaderIconButton
+              onPress={() =>
+                setViewMode(prev => (prev === 'list' ? 'calendar' : 'list'))
+              }
+              accessibilityLabel={
+                viewMode === 'list' ? 'Show calendar' : 'Show list'
+              }
+            >
+              {viewMode === 'list' ? (
+                <CalendarIcon color="#fff" size={19} strokeWidth={2} />
+              ) : (
+                <ListIcon color="#fff" size={19} strokeWidth={2} />
+              )}
+            </HeaderIconButton>
+
+            {/* 2. Weekly report PDF (builds it, then opens the preview) */}
+            <HeaderIconButton
+              onPress={handleExportWeeklyPDF}
+              disabled={exportingPdf}
+              accessibilityLabel="Preview weekly report"
+            >
+              {exportingPdf ? (
+                <ActivityIndicator color="#fff" size="small" />
+              ) : (
+                <FileText color="#fff" size={19} strokeWidth={2} />
+              )}
+            </HeaderIconButton>
+
+            {/* 3. Export DTR (opens the modal) */}
+            <HeaderIconButton
+              onPress={() => setExportModalOpen(true)}
+              accessibilityLabel="Export daily time record"
+            >
+              <Download color="#fff" size={19} strokeWidth={2} />
+            </HeaderIconButton>
+          </>
+        }
+      >
+        {/* Week selector for the weekly PDF report */}
+        <View
+          className="flex-row items-center justify-between rounded-2xl px-2 py-1.5 mt-5"
+          style={{ backgroundColor: 'rgba(255,255,255,0.15)' }}
         >
-          <View className="flex-row items-start justify-between">
-            <View className="flex-1 pr-4">
-              <Text className="text-[26px] font-bold text-white">Reports</Text>
-              <Text
-                className="text-[13px] mt-1.5"
-                style={{ color: 'rgba(255,255,255,0.8)' }}
-              >
-                {headerSubtitle}
-              </Text>
-            </View>
-
-            <View className="flex-row items-center gap-3">
-              {/* 1. Toggle list / calendar */}
-              <Pressable
-                onPress={() =>
-                  setViewMode(prev => (prev === 'list' ? 'calendar' : 'list'))
-                }
-                accessibilityLabel={
-                  viewMode === 'list' ? 'Show calendar' : 'Show list'
-                }
-                className="items-center justify-center rounded-full"
-                style={{
-                  width: 42,
-                  height: 42,
-                  backgroundColor: 'rgba(255,255,255,0.18)',
-                }}
-              >
-                {viewMode === 'list' ? (
-                  <CalendarIcon color="#fff" size={19} strokeWidth={2} />
-                ) : (
-                  <ListIcon color="#fff" size={19} strokeWidth={2} />
-                )}
-              </Pressable>
-
-              {/* 2. Weekly report PDF (builds it, then opens the preview) */}
-              <Pressable
-                onPress={handleExportWeeklyPDF}
-                disabled={exportingPdf}
-                accessibilityLabel="Preview weekly report"
-                className="items-center justify-center rounded-full"
-                style={{
-                  width: 42,
-                  height: 42,
-                  backgroundColor: 'rgba(255,255,255,0.18)',
-                }}
-              >
-                {exportingPdf ? (
-                  <ActivityIndicator color="#fff" size="small" />
-                ) : (
-                  <FileText color="#fff" size={19} strokeWidth={2} />
-                )}
-              </Pressable>
-
-              {/* 3. Export DTR (opens the modal) */}
-              <Pressable
-                onPress={() => setExportModalOpen(true)}
-                accessibilityLabel="Export daily time record"
-                className="items-center justify-center rounded-full"
-                style={{
-                  width: 42,
-                  height: 42,
-                  backgroundColor: 'rgba(255,255,255,0.18)',
-                }}
-              >
-                <Download color="#fff" size={19} strokeWidth={2} />
-              </Pressable>
-            </View>
+          <Pressable
+            onPress={() => setWeekStart(w => addWeeks(w, -1))}
+            accessibilityLabel="Previous week"
+            className="p-2"
+          >
+            <ChevronLeft color="#fff" size={18} />
+          </Pressable>
+          <View className="items-center">
+            <Text
+              className="text-[11px] font-medium"
+              style={{ color: 'rgba(255,255,255,0.75)' }}
+            >
+              Weekly report
+            </Text>
+            <Text className="text-white text-[13px] font-bold">
+              {formatWeekLabel(weekStart)}
+            </Text>
           </View>
+          <Pressable
+            onPress={() => setWeekStart(w => addWeeks(w, 1))}
+            disabled={isCurrentWeek}
+            accessibilityLabel="Next week"
+            className="p-2"
+            style={{ opacity: isCurrentWeek ? 0.3 : 1 }}
+          >
+            <ChevronRight color="#fff" size={18} />
+          </Pressable>
+        </View>
 
-          {/* Week selector for the weekly PDF report */}
+        {/* Preset toggle (list view only) */}
+        {!isCalendar && (
           <View
-            className="flex-row items-center justify-between rounded-2xl px-2 py-1.5 mt-5"
+            className="flex-row rounded-2xl p-1 mt-3"
             style={{ backgroundColor: 'rgba(255,255,255,0.15)' }}
           >
-            <Pressable
-              onPress={() => setWeekStart(w => addWeeks(w, -1))}
-              accessibilityLabel="Previous week"
-              className="p-2"
-            >
-              <ChevronLeft color="#fff" size={18} />
-            </Pressable>
-            <View className="items-center">
-              <Text
-                className="text-[11px] font-medium"
-                style={{ color: 'rgba(255,255,255,0.75)' }}
+            {PRESETS.map(({ key, label }) => (
+              <Pressable
+                key={key}
+                onPress={() => setPreset(key)}
+                className="flex-1 items-center justify-center rounded-xl py-2"
+                style={preset === key ? { backgroundColor: '#fff' } : undefined}
               >
-                Weekly report
-              </Text>
-              <Text className="text-white text-[13px] font-bold">
-                {formatWeekLabel(weekStart)}
-              </Text>
-            </View>
-            <Pressable
-              onPress={() => setWeekStart(w => addWeeks(w, 1))}
-              disabled={isCurrentWeek}
-              accessibilityLabel="Next week"
-              className="p-2"
-              style={{ opacity: isCurrentWeek ? 0.3 : 1 }}
-            >
-              <ChevronRight color="#fff" size={18} />
-            </Pressable>
-          </View>
-
-          {/* Preset toggle (list view only) */}
-          {!isCalendar && (
-            <View
-              className="flex-row rounded-2xl p-1 mt-3"
-              style={{ backgroundColor: 'rgba(255,255,255,0.15)' }}
-            >
-              {PRESETS.map(({ key, label }) => (
-                <Pressable
-                  key={key}
-                  onPress={() => setPreset(key)}
-                  className="flex-1 items-center justify-center rounded-xl py-2"
-                  style={
-                    preset === key ? { backgroundColor: '#fff' } : undefined
-                  }
+                <Text
+                  className="text-[13px] font-semibold"
+                  style={{
+                    color:
+                      preset === key ? themeColor : 'rgba(255,255,255,0.85)',
+                  }}
                 >
-                  <Text
-                    className="text-[13px] font-semibold"
-                    style={{
-                      color:
-                        preset === key ? themeColor : 'rgba(255,255,255,0.85)',
-                    }}
-                  >
-                    {label}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
-          )}
-        </LinearGradient>
-      </Animated.View>
+                  {label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        )}
+      </ScreenHeader>
 
       {isLoading ? (
         <View className="flex-1 items-center justify-center">

@@ -7,7 +7,7 @@ import {
   Pressable,
   Modal,
 } from 'react-native';
-import Animated, { FadeInUp, FadeInDown } from 'react-native-reanimated';
+import Animated, { FadeInUp } from 'react-native-reanimated';
 import {
   CheckCircle2,
   AlertCircle,
@@ -18,7 +18,6 @@ import {
   Sunrise,
   FileText,
 } from 'lucide-react-native';
-import LinearGradient from 'react-native-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../components/Navigation';
@@ -38,7 +37,6 @@ import ConfirmModal from '../components/modal/ConfirmModal';
 import FileAbsenceModal from '../components/modal/FileAbsenceModal';
 import { useLiveLocation } from '../util/hooks/useLiveLocation';
 import {
-  withAlpha,
   formatLogTime,
   getPunchPhase,
   isPointInPolygon,
@@ -50,6 +48,7 @@ import StatusBadge from '../components/timelogs/StatusBadge';
 import FaceEnrollModal from '../components/modal/FaceEnrollModal';
 import TaskNoteModal from '../components/modal/TaskNoteModal';
 import PunchActionCard from '../components/timelogs/PunchActionCard';
+import ScreenHeader from '../components/ScreenHeader';
 import { useExcursion } from '../util/ExcursionContext';
 import {
   PAGE_BG,
@@ -495,29 +494,10 @@ export default function TimeLogs() {
         contentContainerStyle={{ paddingBottom: 106 }}
         showsVerticalScrollIndicator={false}
       >
-        {/* Header: same gradient as Home */}
-        <Animated.View entering={FadeInDown.duration(400)}>
-          <LinearGradient
-            colors={[themeColor, withAlpha(themeColor, 'CC')]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={{
-              paddingTop: 56,
-              paddingBottom: 84,
-              paddingHorizontal: 20,
-              borderBottomLeftRadius: 32,
-              borderBottomRightRadius: 32,
-            }}
-          >
-            <Text className="text-[26px] font-bold text-white">Time logs</Text>
-            <Text
-              className="text-[13px] mt-1.5"
-              style={{ color: 'rgba(255,255,255,0.8)' }}
-            >
-              Track your daily OJT attendance
-            </Text>
-          </LinearGradient>
-        </Animated.View>
+        <ScreenHeader
+          title="Time logs"
+          subtitle="Track your daily OJT attendance"
+        />
 
         <View className="px-5" style={{ marginTop: -56 }}>
           {/* The main action floats over the header */}

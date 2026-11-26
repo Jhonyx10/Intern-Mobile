@@ -37,6 +37,8 @@ import {
 import { useToast } from '../components/ToastProvider';
 import { PAGE_BG, LINE, INK, MUTED, Panel } from '../components/ScreenKit';
 import ScreenHeader from '../components/ScreenHeader';
+import InternshipCompletedCard from '../components/InternshipCompletedCard';
+import { useDashboard } from '../util/queries/dashboard';
 
 function withAlpha(hex: string, alpha: string) {
   return `${hex}${alpha}`;
@@ -363,6 +365,8 @@ export const Documents = () => {
   const themeColor = userData?.settings?.theme_color || '#1D4ED8';
   const { showToast } = useToast();
   const { data: fetchedDocs } = useDocuments();
+  const { data: dashboard } = useDashboard();
+  const isCompleted = Boolean((dashboard as any)?.is_completed);
   const allDocs: DocumentItem[] = fetchedDocs || [];
 
   // Recurring requirements (weekly/daily reports) get their own featured
@@ -452,6 +456,8 @@ export const Documents = () => {
   // week/day) automatically from the requirement's recurrence, so this is
   // the same call for one-shot requirements and recurring ones alike.
   const handleUpload = async (id: string) => {
+    if (isCompleted) return;
+
     try {
       const [res] = await pick({
         mode: 'import',
@@ -546,7 +552,14 @@ export const Documents = () => {
         />
 
         <View className="px-5" style={{ marginTop: -56 }}>
-          <ActionBanner docs={allDocs} />
+          {isCompleted ? (
+            <InternshipCompletedCard
+              className="mb-3"
+              message="Document uploads are now closed. You can still view your submitted files."
+            />
+          ) : (
+            <ActionBanner docs={allDocs} />
+          )}
 
           {allDocs.length === 0 && (
             <Animated.View
@@ -607,7 +620,7 @@ export const Documents = () => {
                           </Text>
                         )}
                       </View>
-                      <ActionPill doc={doc} />
+                      {!isCompleted && <ActionPill doc={doc} />}
                     </View>
 
                     {isUploading === doc.id ? (
@@ -615,11 +628,13 @@ export const Documents = () => {
                     ) : (
                       <Pressable
                         onPress={() => handleUpload(doc.id)}
-                        disabled={doc.can_upload === false}
+                        disabled={isCompleted || doc.can_upload === false}
                         className="flex-row items-center px-4 py-2.5 rounded-xl"
                         style={{
                           backgroundColor:
-                            doc.can_upload === false ? '#CBD5E1' : themeColor,
+                            isCompleted || doc.can_upload === false
+                              ? '#CBD5E1'
+                              : themeColor,
                         }}
                       >
                         <UploadCloud
@@ -628,7 +643,9 @@ export const Documents = () => {
                           strokeWidth={2.25}
                         />
                         <Text className="ml-1.5 text-white font-semibold text-[13px]">
-                          {doc.can_upload === false
+                          {isCompleted
+                            ? 'Closed'
+                            : doc.can_upload === false
                             ? 'Fridays only'
                             : doc.status === 'rejected'
                             ? 'Re-upload'
@@ -689,7 +706,7 @@ export const Documents = () => {
                         <View className="flex-row items-center mt-1.5">
                           <StatusBadge status={doc.status} />
                         </View>
-                        <ActionPill doc={doc} />
+                        {!isCompleted && <ActionPill doc={doc} />}
                       </View>
 
                       {/* Right-side action. Rejected cards use the action row below. */}
@@ -699,8 +716,13 @@ export const Documents = () => {
                         ) : doc.status === 'pending' ? (
                           <Pressable
                             onPress={() => handleUpload(doc.id)}
+                            disabled={isCompleted}
                             className="flex-row items-center px-4 py-2.5 rounded-xl"
-                            style={{ backgroundColor: themeColor }}
+                            style={{
+                              backgroundColor: isCompleted
+                                ? '#CBD5E1'
+                                : themeColor,
+                            }}
                           >
                             <UploadCloud
                               color="#fff"
@@ -774,8 +796,13 @@ export const Documents = () => {
                           ) : (
                             <Pressable
                               onPress={() => handleUpload(doc.id)}
+                              disabled={isCompleted}
                               className="flex-1 flex-row items-center justify-center py-2.5 rounded-xl"
-                              style={{ backgroundColor: themeColor }}
+                              style={{
+                                backgroundColor: isCompleted
+                                  ? '#CBD5E1'
+                                  : themeColor,
+                              }}
                             >
                               <UploadCloud
                                 color="#fff"

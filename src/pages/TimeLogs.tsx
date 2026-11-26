@@ -50,7 +50,6 @@ import {
   startOfflineShift,
   recordOfflineBreak,
   finishOfflineShift,
-  autoCloseOfflineShiftIfDue,
 } from '../util/offlineShift';
 
 import StatusBadge from '../components/timelogs/StatusBadge';
@@ -58,6 +57,7 @@ import FaceEnrollModal from '../components/modal/FaceEnrollModal';
 import TaskNoteModal from '../components/modal/TaskNoteModal';
 import PunchActionCard from '../components/timelogs/PunchActionCard';
 import ScreenHeader from '../components/ScreenHeader';
+import InternshipCompletedCard from '../components/InternshipCompletedCard';
 import { useExcursion } from '../util/ExcursionContext';
 import {
   PAGE_BG,
@@ -99,7 +99,7 @@ export default function TimeLogs() {
     useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { showToast } = useToast();
   const { data: serverStatus, isLoading, refetch } = useTimeStatus();
-  const { data: dashboard } = useDashboard();
+  const { data: dashboard, refetch: refetchDashboard } = useDashboard();
   const { data: userData } = useUser();
   const { mutateAsync: timePunch, isPending: isPunching } = useTimePunch();
   const themeColor = userData?.settings?.theme_color || '#1D4ED8';
@@ -150,12 +150,24 @@ export default function TimeLogs() {
   // Shifts recorded on this device (in progress + waiting for upload)
   const { active: activeShift, done: doneShifts } = useOfflineShifts();
 
+  const isCompleted = Boolean(
+    (serverStatus as any)?.is_completed || (dashboard as any)?.is_completed,
+  );
+  // A shift that is still open can be finished before the screen locks
+  const isLocked = isCompleted && !activeShift && !serverStatus?.open_log;
+
+  // Keep Home and Documents in step right after the final time out
+  const serverCompleted = Boolean((serverStatus as any)?.is_completed);
+  useEffect(() => {
+    if (serverCompleted) refetchDashboard();
+  }, [serverCompleted, refetchDashboard]);
+
   const status: any = useMemo(
     () => applyOfflineShifts(serverStatus, activeShift, doneShifts),
     [serverStatus, activeShift, doneShifts],
   );
 
-  const isRemoved = status?.placement_status === 'removed';
+  const isRemoved = !isLocked && status?.placement_status === 'removed';
   const openLogId: number | null = status?.open_log?.id ?? null;
   const { data: taskChecker } = useTaskChecker(openLogId);
 
@@ -163,9 +175,10 @@ export default function TimeLogs() {
   const polygonCoords = geofencePolygon?.coordinates?.[0];
   const isGeofenceActive = !!polygonCoords;
   const isInGeofence =
-    isGeofenceActive && userLocation
+    !isOnline ||
+    (isGeofenceActive && userLocation
       ? isPointInPolygon(userLocation, polygonCoords)
-      : !isGeofenceActive;
+      : !isGeofenceActive);
 
   const closeModals = () => {
     setCameraMode(null);
@@ -203,6 +216,12 @@ export default function TimeLogs() {
     imageUri: string | null,
     action: 'time_in' | 'time_out' | 'break_out' | 'break_in',
   ) => {
+    if (isLocked) {
+      closeModals();
+      showToast('Your internship is already complete.', 'info');
+      return;
+    }
+
     // Covers both the online and offline paths, even if the button state is stale
     if (action === 'time_in' && getMissedShift()) {
       closeModals();
@@ -365,7 +384,7 @@ export default function TimeLogs() {
   } else if (!status.face_enrolled) {
     punchInDisabled = true;
     punchInHint = 'Enroll your face first';
-  } else if (!isInGeofence) {
+  } else if (isOnline && !isInGeofence) {
     punchInDisabled = true;
     punchInHint = 'Outside of Geofence';
   }
@@ -516,7 +535,7 @@ export default function TimeLogs() {
       : basePunch;
 
   const showAbsenceButton =
-    needsJustification || (pastGracePeriod && !hasTimedIn);
+    !isLocked && (needsJustification || (pastGracePeriod && !hasTimedIn));
 
   const sessionMeta = timelineEntry?.session_period
     ? SESSION_META[timelineEntry.session_period] ?? null
@@ -543,6 +562,10 @@ export default function TimeLogs() {
         />
 
         <View className="px-5" style={{ marginTop: -56 }}>
+          {isLocked && (
+            <InternshipCompletedCard message="You've completed all your required OJT hours. Time tracking is now closed." />
+          )}
+
           {status.face_enrolled && isRemoved && (
             <Animated.View
               entering={FadeInUp.duration(500).delay(200).springify()}
@@ -579,7 +602,7 @@ export default function TimeLogs() {
             </Animated.View>
           )}
 
-          {status.face_enrolled && !isRemoved && (
+          {!isLocked && status.face_enrolled && !isRemoved && (
             <Animated.View
               entering={FadeInUp.duration(500).delay(200).springify()}
             >
@@ -606,7 +629,7 @@ export default function TimeLogs() {
             </Animated.View>
           )}
 
-          {doneShifts.length > 0 && (
+          {!isLocked && doneShifts.length > 0 && (
             <Animated.View entering={FadeInUp.duration(400)} className="mt-4">
               <Panel accent="#D97706">
                 <View className="flex-row items-center p-4">
@@ -624,7 +647,7 @@ export default function TimeLogs() {
             </Animated.View>
           )}
 
-          {locationError && (
+          {!isLocked && locationError && (
             <Animated.View entering={FadeInUp.duration(400)} className="mt-4">
               <Panel accent="#DC2626">
                 <View className="flex-row items-center p-4">
@@ -640,7 +663,7 @@ export default function TimeLogs() {
             </Animated.View>
           )}
 
-          {pendingExcursionCount > 0 && (
+          {!isLocked && pendingExcursionCount > 0 && (
             <Animated.View entering={FadeInUp.duration(400)} className="mt-4">
               <Panel accent="#D97706">
                 <View className="flex-row items-center p-4">
@@ -803,59 +826,63 @@ export default function TimeLogs() {
           </Section>
 
           {/* Geofence */}
-          <Section
-            title="Geofence"
-            entering={FadeInUp.duration(500).delay(600).springify()}
-            right={
-              <View
-                className="rounded-full px-2.5 py-1"
-                style={{
-                  backgroundColor: geofenceConfigured ? '#ECFDF5' : '#FEF2F2',
-                }}
-              >
-                <Text
-                  className="text-[12px] font-semibold"
-                  style={{ color: geofenceConfigured ? '#047857' : '#B91C1C' }}
+          {!isLocked && (
+            <Section
+              title="Geofence"
+              entering={FadeInUp.duration(500).delay(600).springify()}
+              right={
+                <View
+                  className="rounded-full px-2.5 py-1"
+                  style={{
+                    backgroundColor: geofenceConfigured ? '#ECFDF5' : '#FEF2F2',
+                  }}
                 >
-                  {geofenceConfigured ? 'Configured' : 'Not set'}
-                </Text>
-              </View>
-            }
-          >
-            <Panel>
-              <DetailRow
-                label="Company"
-                value={status?.geofence?.company_name || 'Unassigned'}
-              />
-              <DetailRow
-                label="Radius"
-                value={
-                  status?.geofence?.radius_meters
-                    ? `${status.geofence.radius_meters} m`
-                    : 'N/A'
-                }
-                last
-              />
-              {isGeofenceActive && dashboard?.company && polygonCoords && (
-                <View style={{ borderTopWidth: 1, borderTopColor: LINE }}>
-                  <GeofenceMap
-                    polygonCoords={geofencePolygon.coordinates}
-                    centerCoordinate={[
-                      dashboard.company.longitude,
-                      dashboard.company.latitude,
-                    ]}
-                    isInGeofence={isInGeofence}
-                    onLocationUpdate={setUserLocation}
-                  />
+                  <Text
+                    className="text-[12px] font-semibold"
+                    style={{
+                      color: geofenceConfigured ? '#047857' : '#B91C1C',
+                    }}
+                  >
+                    {geofenceConfigured ? 'Configured' : 'Not set'}
+                  </Text>
                 </View>
-              )}
-            </Panel>
-          </Section>
+              }
+            >
+              <Panel>
+                <DetailRow
+                  label="Company"
+                  value={status?.geofence?.company_name || 'Unassigned'}
+                />
+                <DetailRow
+                  label="Radius"
+                  value={
+                    status?.geofence?.radius_meters
+                      ? `${status.geofence.radius_meters} m`
+                      : 'N/A'
+                  }
+                  last
+                />
+                {isGeofenceActive && dashboard?.company && polygonCoords && (
+                  <View style={{ borderTopWidth: 1, borderTopColor: LINE }}>
+                    <GeofenceMap
+                      polygonCoords={geofencePolygon.coordinates}
+                      centerCoordinate={[
+                        dashboard.company.longitude,
+                        dashboard.company.latitude,
+                      ]}
+                      isInGeofence={isInGeofence}
+                      onLocationUpdate={setUserLocation}
+                    />
+                  </View>
+                )}
+              </Panel>
+            </Section>
+          )}
         </View>
       </ScrollView>
 
       <TaskNoteModal
-        visible={taskNoteModalVisible}
+        visible={!isLocked && taskNoteModalVisible}
         onClose={() => setTaskNoteModalVisible(false)}
         onProceed={() => {
           // No camera on time out: record it right after the note prompt
@@ -866,7 +893,7 @@ export default function TimeLogs() {
       />
 
       <FaceEnrollModal
-        visible={cameraMode !== null}
+        visible={!isLocked && cameraMode !== null}
         onClose={() => setCameraMode(null)}
         onEnroll={onCameraCapture}
         isEnrolling={isPunching}
@@ -876,7 +903,7 @@ export default function TimeLogs() {
       />
 
       <ConfirmModal
-        visible={confirmBreakAction !== null}
+        visible={!isLocked && confirmBreakAction !== null}
         title="Outside Geofence"
         message="You are currently outside the office geofence. Since this is just a break, your log will still be recorded."
         confirmLabel="Proceed"
@@ -890,7 +917,7 @@ export default function TimeLogs() {
       />
 
       <FileAbsenceModal
-        visible={absenceModalVisible}
+        visible={!isLocked && absenceModalVisible}
         onClose={() => setAbsenceModalVisible(false)}
         themeColor={themeColor}
       />

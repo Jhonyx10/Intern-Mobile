@@ -33,7 +33,6 @@ const FaceEnrollModal = React.memo(
     isEnrolling,
     themeColor,
     title,
-    captureLabel,
   }: {
     visible: boolean;
     onClose: () => void;

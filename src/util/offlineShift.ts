@@ -25,12 +25,10 @@ export interface OfflineShift {
   break_out: string | null;
   break_in: string | null;
   time_out: string | null;
-  time_out_image: string | null;
+  auto_closed?: boolean; // closed by the app because the intern forgot to time out
   morning: OfflineTask | null;
   afternoon: OfflineTask | null;
 }
-
-type Capture = { image: string | null; timestamp: string };
 
 const emit = () => DeviceEventEmitter.emit(CHANGED);
 
@@ -65,7 +63,11 @@ export const getOfflineShifts = () => read<OfflineShift[]>(DONE_KEY, []);
 export const currentSession = (s: OfflineShift): TaskSession =>
   s.break_in ? 'afternoon' : 'morning';
 
-export const startOfflineShift = async (c: Capture) => {
+// Only the morning time in needs a photo
+export const startOfflineShift = async (c: {
+  image: string | null;
+  timestamp: string;
+}) => {
   if (await getActiveShift())
     throw new Error('You already have an offline shift in progress.');
   if (!c.image) throw new Error('A photo is required to time in.');
@@ -76,7 +78,6 @@ export const startOfflineShift = async (c: Capture) => {
     break_out: null,
     break_in: null,
     time_out: null,
-    time_out_image: null,
     morning: null,
     afternoon: null,
   };
@@ -116,18 +117,68 @@ export const saveOfflineTask = async (
   emit();
 };
 
-// Time out: close the shift and move it into the "waiting for upload" array
-export const finishOfflineShift = async (c: Capture) => {
+// Time out (no photo): close the shift and move it into the "waiting for upload" array
+export const finishOfflineShift = async (c: {
+  timestamp: string;
+  auto?: boolean;
+}) => {
   const s = await getActiveShift();
   if (!s) throw new Error('No offline shift in progress.');
-  if (!c.image) throw new Error('A photo is required to time out.');
   s.time_out = c.timestamp;
-  s.time_out_image = await persistFile(c.image);
+  s.auto_closed = Boolean(c.auto);
   const done = await getOfflineShifts();
   done.push(s);
   await AsyncStorage.setItem(DONE_KEY, JSON.stringify(done));
   await AsyncStorage.removeItem(ACTIVE_KEY);
   emit();
+};
+
+// "09:00" or "09:00 AM" on the same calendar day as `base`
+const timeOnDate = (value: string, base: Date): Date | null => {
+  const m = value.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+  if (!m) return null;
+  let h = parseInt(m[1], 10);
+  const min = parseInt(m[2], 10);
+  const mer = m[3]?.toUpperCase();
+  if (mer === 'PM' && h < 12) h += 12;
+  if (mer === 'AM' && h === 12) h = 0;
+  const d = new Date(base);
+  d.setHours(h, min, 0, 0);
+  return d;
+};
+
+/**
+ * If an offline shift is still open past the scheduled time out of the day it
+ * started, close it AT the scheduled time out. Returns true if it closed one.
+ */
+export const autoCloseOfflineShiftIfDue = async (
+  scheduleTimeOut?: string | null,
+): Promise<boolean> => {
+  const s = await getActiveShift();
+  if (!s || !scheduleTimeOut) return false;
+
+  const timeIn = new Date(s.time_in);
+
+  // Due moment: scheduled time out on the day the shift started
+  const dueAt = timeOnDate(scheduleTimeOut, timeIn);
+  if (!dueAt) return false;
+
+  // Same guard as the backend: never due at/before time in (overnight shifts)
+  if (dueAt.getTime() <= timeIn.getTime()) {
+    dueAt.setDate(dueAt.getDate() + 1);
+  }
+
+  // Not due yet: leave it open so the intern can still time out normally
+  if (Date.now() < dueAt.getTime()) return false;
+
+  // Never close earlier than the last recorded punch
+  const punches = [s.time_in, s.break_out, s.break_in]
+    .filter(Boolean)
+    .map(t => new Date(t as string).getTime());
+  const closeAt = new Date(Math.max(dueAt.getTime(), ...punches));
+
+  await finishOfflineShift({ timestamp: closeAt.toISOString(), auto: true });
+  return true;
 };
 
 export const deleteOfflineShift = async (id: string) => {
@@ -139,7 +190,6 @@ export const deleteOfflineShift = async (id: string) => {
   );
   if (target) {
     removeFile(target.time_in_image);
-    removeFile(target.time_out_image);
     [target.morning, target.afternoon].forEach(t =>
       t?.photos.forEach(p => removeFile(p.uri)),
     );
@@ -154,14 +204,10 @@ export const uploadOfflineShift = async (s: OfflineShift) => {
   f.append('time_out', s.time_out as string);
   if (s.break_out) f.append('break_out', s.break_out);
   if (s.break_in) f.append('break_in', s.break_in);
+  if (s.auto_closed) f.append('auto_closed', '1');
   f.append('time_in_image', {
     uri: s.time_in_image,
     name: 'time_in.jpg',
-    type: 'image/jpeg',
-  } as any);
-  f.append('time_out_image', {
-    uri: s.time_out_image,
-    name: 'time_out.jpg',
     type: 'image/jpeg',
   } as any);
 
@@ -176,7 +222,7 @@ export const uploadOfflineShift = async (s: OfflineShift) => {
   try {
     const { data } = await api.post('/intern/time/offline-shift', f, {
       headers: { 'Content-Type': 'multipart/form-data' },
-      timeout: 90000, // two face checks plus photos can be slow
+      timeout: 90000, // face check plus photos can be slow
     });
     await deleteOfflineShift(s.id);
     return data;

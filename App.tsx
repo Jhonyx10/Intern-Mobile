@@ -30,6 +30,7 @@ import { OfflineSyncProvider } from './src/components/OfflineSyncProvider';
 import { queryClient } from './src/util/queryClient';
 import { ExcursionProvider } from './src/util/ExcursionContext';
 import GeofenceAutoMonitor from './src/components/GeofenceAutoMonitor';
+import { useAutoCloseOfflineShift } from './src/util/hooks/useAutoCloseOfflineShift';
 
 function App() {
   const isDarkMode = useColorScheme() === 'dark';
@@ -40,6 +41,7 @@ function App() {
         <OfflineSyncProvider>
           <ToastProvider>
             <StatusBar
+              // @ts-ignore
               barStyle={isDarkMode ? 'light-content' : 'dark-content'}
             />
             <AppContent />
@@ -57,6 +59,7 @@ function AppContent() {
   useFcmListener();
   useFcmRegistration(isLoggedIn);
   const { isGpsEnabled } = useGpsStatus();
+  useAutoCloseOfflineShift(isLoggedIn);
 
   return (
     <ExcursionProvider isLoggedIn={isLoggedIn}>

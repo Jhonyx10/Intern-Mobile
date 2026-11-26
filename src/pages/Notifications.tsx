@@ -1,11 +1,10 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
   FlatList,
   Pressable,
   ActivityIndicator,
-  Alert,
 } from 'react-native';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import LinearGradient from 'react-native-linear-gradient';
@@ -32,6 +31,8 @@ import {
 } from '../util/queries/notifications';
 import { useUser } from '../util/queries/auth';
 import { withAlpha } from '../util/timeLogHelpers';
+import { useToast } from '../components/ToastProvider';
+import ConfirmModal from '../components/modal/ConfirmModal';
 
 const GRAY = '#94A3B8';
 
@@ -264,7 +265,10 @@ export default function Notifications() {
   const navigation =
     useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { data: userData } = useUser();
+  const { showToast } = useToast();
   const themeColor = userData?.settings?.theme_color || '#1D4ED8';
+
+  const [confirmClearOpen, setConfirmClearOpen] = useState(false);
 
   // Read + unread, so notifications stay visible after you open them
   const {
@@ -293,19 +297,17 @@ export default function Notifications() {
     }
   };
 
-  const handleClearAll = () => {
-    Alert.alert(
-      'Clear notifications',
-      'This will remove all your notifications. This can’t be undone.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Clear all',
-          style: 'destructive',
-          onPress: () => clearAll.mutate(),
-        },
-      ],
-    );
+  // Opens the confirmation (replaces Alert.alert)
+  const handleClearAll = () => setConfirmClearOpen(true);
+
+  // Runs after the user confirms. The result is reported with a toast.
+  const confirmClearAll = () => {
+    setConfirmClearOpen(false);
+    clearAll.mutate(undefined, {
+      onSuccess: () => showToast('All notifications cleared.', 'success'),
+      onError: () =>
+        showToast('Could not clear notifications. Please try again.', 'error'),
+    });
   };
 
   return (
@@ -404,6 +406,17 @@ export default function Notifications() {
           }
         />
       )}
+
+      <ConfirmModal
+        visible={confirmClearOpen}
+        title="Clear notifications"
+        message="This will remove all your notifications. This can’t be undone."
+        confirmLabel="Clear all"
+        cancelLabel="Cancel"
+        themeColor={themeColor}
+        onCancel={() => setConfirmClearOpen(false)}
+        onConfirm={confirmClearAll}
+      />
     </View>
   );
 }

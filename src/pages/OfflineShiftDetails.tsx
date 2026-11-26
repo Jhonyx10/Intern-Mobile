@@ -133,6 +133,11 @@ export default function OfflineShiftDetails() {
                   })
                 : '—'}
             </Text>
+            {shift?.auto_closed && (
+              <Text className="text-amber-200 text-[12px] mt-0.5">
+                Auto-closed: no time out was recorded
+              </Text>
+            )}
           </View>
         </View>
       </View>

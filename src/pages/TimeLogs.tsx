@@ -6,6 +6,7 @@ import {
   ActivityIndicator,
   Pressable,
   Modal,
+  AppState,
 } from 'react-native';
 import Animated, { FadeInUp } from 'react-native-reanimated';
 import {
@@ -49,6 +50,7 @@ import {
   startOfflineShift,
   recordOfflineBreak,
   finishOfflineShift,
+  autoCloseOfflineShiftIfDue,
 } from '../util/offlineShift';
 
 import StatusBadge from '../components/timelogs/StatusBadge';
@@ -90,6 +92,8 @@ function timeTodayFrom(value?: string | null): Date | null {
   return d;
 }
 
+const MISSED_SHIFT_MESSAGE = 'Shift ended. You did not time in today.';
+
 export default function TimeLogs() {
   const navigation =
     useNavigation<NativeStackNavigationProp<RootStackParamList>>();
@@ -111,12 +115,19 @@ export default function TimeLogs() {
     null,
   );
 
-  // Ticking clock so the absence button appears on its own without a refresh
+  // Ticking clock. Also refreshes when the app comes back to the foreground,
+  // because JS timers can pause while the app is in the background.
   const [now, setNow] = useState(() => new Date());
 
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 30 * 1000);
-    return () => clearInterval(id);
+    const sub = AppState.addEventListener('change', s => {
+      if (s === 'active') setNow(new Date());
+    });
+    return () => {
+      clearInterval(id);
+      sub.remove();
+    };
   }, []);
 
   const { pendingCount: pendingExcursionCount, openFirstPending } =
@@ -173,7 +184,7 @@ export default function TimeLogs() {
       } else if (action === 'break_out' || action === 'break_in') {
         await recordOfflineBreak(action, timestamp);
       } else {
-        await finishOfflineShift({ image: imageUri, timestamp });
+        await finishOfflineShift({ timestamp });
       }
       showToast(
         action === 'time_out'
@@ -483,16 +494,15 @@ export default function TimeLogs() {
   // ---- Punch blocking ----
   // Blocked only when the scheduled time out has passed and the intern never timed in.
   // Uses a fresh clock reading so it is accurate on press, online or offline.
-  const getMissedShift = () => {
+  function getMissedShift() {
     const scheduledTimeOut = timeTodayFrom(
-      status.today_attendance?.schedule_time_out ?? schedule?.time_out,
+      status?.today_attendance?.schedule_time_out ?? schedule?.time_out,
     );
     if (!scheduledTimeOut) return false;
     return Date.now() >= scheduledTimeOut.getTime() && !hasTimedIn;
-  };
+  }
 
   const missedShift = getMissedShift();
-  const MISSED_SHIFT_MESSAGE = 'Shift ended. You did not time in today.';
 
   const basePunch = punchConfig[punchPhase];
   const punch =
@@ -588,7 +598,8 @@ export default function TimeLogs() {
                     style={{ color: INK }}
                   >
                     Offline shift in progress. It is saved on this device and
-                    can be uploaded from Reports after you time out.
+                    can be uploaded from Reports after you time out. If you
+                    forget, it closes at your scheduled time out.
                   </Text>
                 </View>
               </Panel>

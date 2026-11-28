@@ -25,6 +25,7 @@ export interface OfflineShift {
   break_out: string | null;
   break_in: string | null;
   time_out: string | null;
+  time_out_image?: string | null; // face photo taken at time out (none when auto-closed)
   auto_closed?: boolean; // closed by the app because the intern forgot to time out
   morning: OfflineTask | null;
   afternoon: OfflineTask | null;
@@ -63,7 +64,7 @@ export const getOfflineShifts = () => read<OfflineShift[]>(DONE_KEY, []);
 export const currentSession = (s: OfflineShift): TaskSession =>
   s.break_in ? 'afternoon' : 'morning';
 
-// Only the morning time in needs a photo
+// Time in needs a photo (checked against the face profile when the shift uploads)
 export const startOfflineShift = async (c: {
   image: string | null;
   timestamp: string;
@@ -78,6 +79,7 @@ export const startOfflineShift = async (c: {
     break_out: null,
     break_in: null,
     time_out: null,
+    time_out_image: null,
     morning: null,
     afternoon: null,
   };
@@ -117,15 +119,21 @@ export const saveOfflineTask = async (
   emit();
 };
 
-// Time out (no photo): close the shift and move it into the "waiting for upload" array
+// Time out: a manual time out needs a face photo. An auto-closed shift (forgot to
+// time out) has none. Closes the shift and moves it to the "waiting for upload" array.
 export const finishOfflineShift = async (c: {
   timestamp: string;
   auto?: boolean;
+  image?: string | null;
 }) => {
   const s = await getActiveShift();
   if (!s) throw new Error('No offline shift in progress.');
+  if (!c.auto && !c.image) throw new Error('A photo is required to time out.');
+
   s.time_out = c.timestamp;
   s.auto_closed = Boolean(c.auto);
+  s.time_out_image = c.image ? await persistFile(c.image) : null;
+
   const done = await getOfflineShifts();
   done.push(s);
   await AsyncStorage.setItem(DONE_KEY, JSON.stringify(done));
@@ -177,6 +185,7 @@ export const autoCloseOfflineShiftIfDue = async (
     .map(t => new Date(t as string).getTime());
   const closeAt = new Date(Math.max(dueAt.getTime(), ...punches));
 
+  // Auto-close has no time out photo
   await finishOfflineShift({ timestamp: closeAt.toISOString(), auto: true });
   return true;
 };
@@ -190,6 +199,7 @@ export const deleteOfflineShift = async (id: string) => {
   );
   if (target) {
     removeFile(target.time_in_image);
+    removeFile(target.time_out_image);
     [target.morning, target.afternoon].forEach(t =>
       t?.photos.forEach(p => removeFile(p.uri)),
     );
@@ -210,6 +220,15 @@ export const uploadOfflineShift = async (s: OfflineShift) => {
     name: 'time_in.jpg',
     type: 'image/jpeg',
   } as any);
+
+  // Face check on time out (shifts queued by older app versions have none)
+  if (s.time_out_image) {
+    f.append('time_out_image', {
+      uri: s.time_out_image,
+      name: 'time_out.jpg',
+      type: 'image/jpeg',
+    } as any);
+  }
 
   (['morning', 'afternoon'] as const).forEach(k => {
     const t = s[k];

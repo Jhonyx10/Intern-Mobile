@@ -94,3 +94,16 @@ export const downloadDocumentFile = async (documentId: string, period?: string) 
 
     return Platform.OS === 'android' ? `file://${path}` : path;
 };
+
+export const useCancelSubmission = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (submissionId: number) => {
+      const res = await api.delete(`intern/documents/submissions/${submissionId}`);
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['documents'] });
+    },
+  });
+};

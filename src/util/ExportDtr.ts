@@ -3,6 +3,7 @@ import ReactNativeBlobUtil from 'react-native-blob-util';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { format } from 'date-fns';
+import * as XLSX from 'xlsx';
 import { DateRange, filterLogsByRange, fileSuffix } from './dtrRange';
 
 /* ── PDF layout: Civil Service Form 48 style (same as web) ───── */
@@ -42,6 +43,14 @@ function scheduleClock(t?: string | null): string {
   const m = t?.match(/^(\d{1,2}):(\d{2})/);
   if (!m) return '';
   return `${Number(m[1]) % 12 || 12}:${m[2]}`;
+}
+
+// Same as scheduleClock but with AM/PM, for the CSV: "08:00" -> "8:00 AM", "17:30" -> "5:30 PM"
+function scheduleClock12(t?: string | null): string {
+  const m = t?.match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return '';
+  const h = Number(m[1]);
+  return `${h % 12 || 12}:${m[2]} ${h < 12 ? 'AM' : 'PM'}`;
 }
 
 function groupByMonth(logs: any[]): Map<string, any[]> {
@@ -380,26 +389,109 @@ export async function exportDtrCsv(
   student: DtrStudent,
   range?: DateRange | null,
 ) {
+  const { info, headers, rows } = buildTable(allLogs, student, range, false);
+
+  // Title block, blank line, then the table
+  const lines: Cell[][] = [['DAILY TIME RECORD'], ...info, [], headers, ...rows];
+
+  const csv = lines
+    .map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(','))
+    .join('\r\n');
+
+  // BOM so Excel opens it as UTF-8 (keeps "ñ" and other accents intact)
+  await deliver(`${baseName(student)}${fileSuffix(range)}.csv`, '\uFEFF' + csv, 'utf8', 'text/csv');
+}
+
+/* ── Excel (.xlsx) ────────────────────────────────────────────── */
+export async function exportDtrXlsx(
+  allLogs: any[],
+  student: DtrStudent,
+  range?: DateRange | null,
+) {
+  const { info, headers, rows } = buildTable(allLogs, student, range, true);
+  const lastCol = headers.length - 1;
+
+  const aoa: Cell[][] = [['DAILY TIME RECORD'], ...info, [], headers, ...rows];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+
+  // Title spans the whole table; each info value spans from column B to the end
+  ws['!merges'] = [
+    { s: { r: 0, c: 0 }, e: { r: 0, c: lastCol } },
+    ...info.map((_, i) => ({ s: { r: i + 1, c: 1 }, e: { r: i + 1, c: lastCol } })),
+  ];
+
+  ws['!cols'] = [
+    { wch: 16 }, // Date
+    { wch: 11 }, // Time In
+    { wch: 11 }, // Break Out
+    { wch: 11 }, // Break In
+    { wch: 11 }, // Time Out
+    { wch: 14 }, // Duration (hrs)
+    { wch: 13 }, // Status
+  ];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'DTR');
+
+  const base64 = XLSX.write(wb, { type: 'base64', bookType: 'xlsx' });
+  await deliver(
+    `${baseName(student)}${fileSuffix(range)}.xlsx`,
+    base64,
+    'base64',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  );
+}
+
+/* ── shared table for CSV + Excel ─────────────────────────────── */
+function baseName(student: DtrStudent) {
+  return `${student.name.replace(/\s+/g, '_') || 'Student'}_DTR`;
+}
+
+function buildTable(
+  allLogs: any[],
+  student: DtrStudent,
+  range: DateRange | null | undefined,
+  numericDuration: boolean,
+) {
   const logs = filterLogsByRange(allLogs, range);
   if (!logs.length) throw new Error('No time logs in the selected period.');
+
+  const tIn = scheduleClock12(student.scheduleIn);
+  const tOut = scheduleClock12(student.scheduleOut);
+  const schedule = tIn && tOut ? `${tIn} - ${tOut}` : 'Not set';
+
+  // Period = first to last log date in the export
+  const dates = logs
+    .map((l: any) => new Date(l.time_in))
+    .filter((d: Date) => !isNaN(d.getTime()))
+    .sort((a: Date, b: Date) => a.getTime() - b.getTime());
+  const period = dates.length
+    ? `${format(dates[0], 'MMM dd, yyyy')} - ${format(dates[dates.length - 1], 'MMM dd, yyyy')}`
+    : '';
+
+  const info: Cell[][] = [
+    ['Name', student.name],
+    ['Company', student.company || 'Not assigned'],
+    ['Scheduled Time', schedule],
+    ['Period', period],
+  ];
 
   const headers = ['Date', 'Time In', 'Break Out', 'Break In', 'Time Out', 'Duration (hrs)', 'Status'];
   const t = (v?: string | null) => (v ? format(new Date(v), 'hh:mm a') : '');
 
-  const rows = logs.map((l: any) => [
+  const rows: Cell[][] = logs.map((l: any) => [
     l.time_in ? format(new Date(l.time_in), 'MMM dd, yyyy') : '',
     t(l.time_in),
     t(l.break_out),
     t(l.break_in),
     l.is_open ? 'Active' : t(l.time_out),
-    l.duration_hours != null ? Number(l.duration_hours).toFixed(2) : 'In Progress',
+    l.duration_hours != null
+      ? numericDuration
+        ? Number(Number(l.duration_hours).toFixed(2)) // real number so Excel can SUM it
+        : Number(l.duration_hours).toFixed(2)
+      : 'In Progress',
     l.verification_method === 'auto_closed_missed_punch_out' ? 'Auto-closed' : 'Completed',
   ]);
 
-  const csv = [headers, ...rows]
-    .map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(','))
-    .join('\n');
-
-  const safeName = student.name.replace(/\s+/g, '_') || 'Student';
-  await deliver(`${safeName}_DTR${fileSuffix(range)}.csv`, csv, 'utf8', 'text/csv');
+  return { info, headers, rows };
 }

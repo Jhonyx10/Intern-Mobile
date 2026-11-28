@@ -22,7 +22,7 @@ const REQUIRED_BLINKS = 2;
 const WARMUP_MS = 1000; // ignore blinks while camera/face settle in
 const INTER_BLINK_TIMEOUT_MS = 5000; // must finish the 2nd blink within this long of the 1st
 const CHALLENGE_WINDOW_MS = 8000; // overall cap from "ready" to fully verified
-const AUTO_CAPTURE_DELAY_MS = 400; // short pause after the 2nd blink so the eyes are fully open
+const AUTO_CAPTURE_DELAY_MS = 100; // short pause after the 2nd blink (the blink only counts once eyes are open again)
 
 const FaceEnrollModal = React.memo(
   ({
@@ -276,7 +276,7 @@ const FaceEnrollModal = React.memo(
     return (
       <Modal
         visible={visible}
-        animationType="slide"
+        animationType="none" // closes instantly, no slide/fade-out delay
         presentationStyle="fullScreen"
       >
         <View style={{ flex: 1, backgroundColor: '#000' }}>

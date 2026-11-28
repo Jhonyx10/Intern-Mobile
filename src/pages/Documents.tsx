@@ -25,13 +25,15 @@ import {
   File,
   AlertCircle,
   Clock,
+  Trash2,
 } from 'lucide-react-native';
-import { pick, types } from '@react-native-documents/picker';
+import { pick, types, keepLocalCopy } from '@react-native-documents/picker';
 import Pdf from 'react-native-pdf';
 import { useUser } from '../util/queries/auth';
 import {
   useUploadDocument,
   useDocuments,
+  useCancelSubmission,
   downloadDocumentFile,
 } from '../util/queries/documents';
 import { useToast } from '../components/ToastProvider';
@@ -39,6 +41,8 @@ import { PAGE_BG, LINE, INK, MUTED, Panel } from '../components/ScreenKit';
 import ScreenHeader from '../components/ScreenHeader';
 import InternshipCompletedCard from '../components/InternshipCompletedCard';
 import { useDashboard } from '../util/queries/dashboard';
+
+const MAX_FILE_BYTES = 10 * 1024 * 1024; // matches the server's 10 MB limit
 
 function withAlpha(hex: string, alpha: string) {
   return `${hex}${alpha}`;
@@ -60,6 +64,8 @@ export type DocumentItem = {
   title: string;
   status: DocStatus;
   uri?: string;
+  // The current submission's id. Needed to cancel it while it is under review.
+  submission_id?: number | null;
   recurrence?: Recurrence;
   period_start?: string | null;
   history?: DocumentHistoryEntry[];
@@ -84,6 +90,19 @@ type ViewOptions = {
   reason?: string | null;
 };
 
+// A file the intern picked and is previewing before it is submitted.
+// `uri` is a local copy in the app's cache, safe for both preview and upload.
+type PendingUpload = {
+  docId: string;
+  title: string;
+  file: {
+    uri: string;
+    name?: string | null;
+    size?: number | null;
+    type?: string;
+  };
+};
+
 // One row in the "Submitted files" list of a recurring requirement
 type Submission = {
   key: string;
@@ -93,6 +112,16 @@ type Submission = {
   // true = the current period's file (fetched without a period param)
   isCurrent: boolean;
 };
+
+type DocFilter = 'all' | 'todo' | 'review' | 'approved' | 'rejected';
+
+const FILTERS: { key: DocFilter; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'todo', label: 'To do' },
+  { key: 'review', label: 'Under review' },
+  { key: 'approved', label: 'Approved' },
+  { key: 'rejected', label: 'Rejected' },
+];
 
 const STATUS_META: Record<DocStatus, { color: string; label: string }> = {
   pending: { color: MUTED, label: 'Required' },
@@ -308,6 +337,53 @@ function RejectionNote({ reason }: { reason?: string | null }) {
   );
 }
 
+// Spinner shown in place of the upload button while a file is being sent.
+// Defined at module level so it keeps a stable identity between renders.
+function UploadingIndicator({ themeColor }: { themeColor: string }) {
+  return (
+    <View
+      className="px-5 py-2.5 rounded-xl"
+      style={{ backgroundColor: withAlpha(themeColor, '15') }}
+    >
+      <ActivityIndicator size="small" color={themeColor} />
+    </View>
+  );
+}
+
+// Lets the intern take back a file that is still under review
+function CancelSubmissionButton({
+  doc,
+  isCompleted,
+  onPress,
+}: {
+  doc: DocumentItem;
+  isCompleted: boolean;
+  onPress: (doc: DocumentItem) => void;
+}) {
+  if (isCompleted || doc.status !== 'uploaded' || !doc.submission_id) {
+    return null;
+  }
+  return (
+    <Pressable
+      onPress={() => onPress(doc)}
+      className="mt-3 flex-row items-center justify-center py-2.5 rounded-xl"
+      style={{
+        backgroundColor: '#FEF2F2',
+        borderWidth: 1,
+        borderColor: '#FECACA',
+      }}
+    >
+      <Trash2 color="#DC2626" size={14} strokeWidth={2} />
+      <Text
+        className="ml-1.5 font-semibold text-[13px]"
+        style={{ color: '#B91C1C' }}
+      >
+        Cancel submission
+      </Text>
+    </Pressable>
+  );
+}
+
 function formatPeriodLabel(periodStart: string, recurrence?: Recurrence) {
   try {
     const date = new Date(periodStart + 'T00:00:00');
@@ -320,6 +396,12 @@ function formatPeriodLabel(periodStart: string, recurrence?: Recurrence) {
   } catch {
     return periodStart;
   }
+}
+
+function formatFileSize(bytes?: number | null) {
+  if (!bytes) return '';
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 // Builds the full list of submitted files for a recurring requirement:
@@ -369,14 +451,39 @@ export const Documents = () => {
   const isCompleted = Boolean((dashboard as any)?.is_completed);
   const allDocs: DocumentItem[] = fetchedDocs || [];
 
+  // ── Filter ──────────────────────────────────────────────────
+  const [filter, setFilter] = useState<DocFilter>('all');
+
+  const matchesFilter = (d: DocumentItem, f: DocFilter) => {
+    switch (f) {
+      case 'todo':
+        return !isCompleted && Boolean(getActionMeta(d));
+      case 'review':
+        return d.status === 'uploaded';
+      case 'approved':
+        return d.status === 'approved';
+      case 'rejected':
+        return d.status === 'rejected';
+      default:
+        return true;
+    }
+  };
+
+  const filterCounts = FILTERS.reduce((acc, f) => {
+    acc[f.key] = allDocs.filter(d => matchesFilter(d, f.key)).length;
+    return acc;
+  }, {} as Record<DocFilter, number>);
+
+  const visibleDocs = allDocs.filter(d => matchesFilter(d, filter));
+
   // Recurring requirements (weekly/daily reports) get their own featured
   // card with a "current period" upload slot and a Files button that opens
   // every file submitted so far. Everything else is a normal one-shot
   // requirement.
-  const recurringDocs = allDocs
+  const recurringDocs = visibleDocs
     .filter(d => d.recurrence && d.recurrence !== 'none')
     .sort(urgencyFirst);
-  const docs = allDocs
+  const docs = visibleDocs
     .filter(d => !d.recurrence || d.recurrence === 'none')
     .sort(urgencyFirst);
 
@@ -385,13 +492,24 @@ export const Documents = () => {
   const [isLoadingPdf, setIsLoadingPdf] = useState<boolean>(false);
   const [isUploading, setIsUploading] = useState<string | null>(null);
   const uploadDocMutation = useUploadDocument();
+  const cancelMutation = useCancelSubmission();
+
+  // Preview-before-submit
+  const [pendingUpload, setPendingUpload] = useState<PendingUpload | null>(
+    null,
+  );
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  // Cancel an under-review submission
+  const [cancelTarget, setCancelTarget] = useState<DocumentItem | null>(null);
 
   // Submitted-files modal (recurring requirements)
   const [filesDocId, setFilesDocId] = useState<string | null>(null);
   const [reopenFilesId, setReopenFilesId] = useState<string | null>(null);
 
   // Derived from live data, so the list stays current after an upload
-  const filesDoc = recurringDocs.find(d => d.id === filesDocId) ?? null;
+  const filesDoc =
+    allDocs.find(d => d.id === filesDocId && d.recurrence !== 'none') ?? null;
   const filesSubmissions = filesDoc ? buildSubmissions(filesDoc) : [];
 
   // Custom Feedback Modal state
@@ -452,42 +570,56 @@ export const Documents = () => {
     }
   };
 
-  // Generic upload handler — the backend determines the period (current
-  // week/day) automatically from the requirement's recurrence, so this is
-  // the same call for one-shot requirements and recurring ones alike.
-  const handleUpload = async (id: string) => {
+  // Step 1: pick a file. Nothing is sent yet; it opens the preview.
+  // The picked file is copied into the app's cache first, because the raw
+  // picker URI (often content:// on Android) is not reliably readable by
+  // react-native-pdf or FormData.
+  const handleUpload = async (id: string, title: string) => {
     if (isCompleted) return;
 
     try {
       const [res] = await pick({
-        mode: 'import',
         type: [types.pdf],
         allowMultiSelection: false,
       });
 
-      if (res?.uri) {
-        try {
-          setIsUploading(id);
-          await uploadDocMutation.mutateAsync({ documentId: id, file: res });
-          setIsUploading(null);
-          showFeedback(
-            'success',
-            'Upload Successful!',
-            'Your document has been submitted successfully and is now pending review.',
-          );
-        } catch (uploadErr: any) {
-          setIsUploading(null);
-          showFeedback(
-            'error',
-            'Upload Failed',
-            uploadErr?.response?.data?.message ||
-              uploadErr?.message ||
-              'Failed to upload document to server.',
-          );
-        }
+      if (!res?.uri) return;
+
+      if (res.size && res.size > MAX_FILE_BYTES) {
+        showFeedback(
+          'error',
+          'File Too Large',
+          'The file is larger than 10 MB. Please choose a smaller PDF.',
+        );
+        return;
       }
+
+      const [copy] = await keepLocalCopy({
+        files: [{ uri: res.uri, fileName: res.name ?? 'document.pdf' }],
+        destination: 'cachesDirectory',
+      });
+
+      if (copy.status !== 'success') {
+        showFeedback(
+          'error',
+          'Selection Error',
+          'Could not read that file. Please try another PDF.',
+        );
+        return;
+      }
+
+      setUploadError(null);
+      setPendingUpload({
+        docId: id,
+        title,
+        file: {
+          uri: copy.localUri,
+          name: res.name,
+          size: res.size,
+          type: 'application/pdf',
+        },
+      });
     } catch (err: any) {
-      setIsUploading(null);
       if (
         err?.code !== 'OPERATION_CANCELED' &&
         !err?.message?.includes('cancel')
@@ -498,6 +630,78 @@ export const Documents = () => {
           err?.message || 'An unknown error occurred while selecting the file.',
         );
       }
+    }
+  };
+
+  // Step 2: the intern reviewed the preview and confirms. Now it is sent.
+  // The backend determines the period (current week/day) from the
+  // requirement's recurrence.
+  const confirmUpload = async () => {
+    if (!pendingUpload || isCompleted) return;
+    const { docId, file } = pendingUpload;
+
+    try {
+      setUploadError(null);
+      setIsUploading(docId);
+      await uploadDocMutation.mutateAsync({
+        documentId: docId,
+        file: file as any,
+      });
+      setIsUploading(null);
+      setPendingUpload(null);
+      // Wait for the preview sheet to finish dismissing. Presenting a second
+      // Modal while the first is still animating away can crash on iOS.
+      setTimeout(() => {
+        showFeedback(
+          'success',
+          'Upload Successful!',
+          'Your document has been submitted and is now under review. You can cancel it until your coordinator reviews it.',
+        );
+      }, 500);
+    } catch (uploadErr: any) {
+      setIsUploading(null);
+      // Stay on the preview so the intern can retry without picking again
+      setUploadError(
+        uploadErr?.response?.data?.message ||
+          uploadErr?.message ||
+          'Failed to upload document to server.',
+      );
+    }
+  };
+
+  const discardPendingUpload = () => {
+    if (isUploading) return;
+    setPendingUpload(null);
+    setUploadError(null);
+  };
+
+  // Removes an under-review submission so a new one can be uploaded
+  const confirmCancelSubmission = async () => {
+    const target = cancelTarget;
+    if (!target?.submission_id) return;
+
+    try {
+      await cancelMutation.mutateAsync(target.submission_id);
+      setCancelTarget(null);
+      // Same reason as above: let the confirm dialog finish closing first
+      setTimeout(() => {
+        showFeedback(
+          'success',
+          'Submission Removed',
+          'Your file was removed. You can upload a new one when you are ready.',
+        );
+      }, 400);
+    } catch (err: any) {
+      setCancelTarget(null);
+      setTimeout(() => {
+        showFeedback(
+          'error',
+          'Could Not Remove File',
+          err?.response?.data?.message ||
+            err?.message ||
+            'Something went wrong. Please try again.',
+        );
+      }, 400);
     }
   };
 
@@ -529,15 +733,8 @@ export const Documents = () => {
     });
   };
 
-  // ── Shared buttons ──────────────────────────────────────────
-  const UploadingIndicator = () => (
-    <View
-      className="px-5 py-2.5 rounded-xl"
-      style={{ backgroundColor: withAlpha(themeColor, '15') }}
-    >
-      <ActivityIndicator size="small" color={themeColor} />
-    </View>
-  );
+  const nothingMatches =
+    allDocs.length > 0 && recurringDocs.length === 0 && docs.length === 0;
 
   return (
     <>
@@ -559,6 +756,58 @@ export const Documents = () => {
             />
           ) : (
             <ActionBanner docs={allDocs} />
+          )}
+
+          {/* Filter */}
+          {allDocs.length > 0 && (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              className="mb-3"
+              contentContainerStyle={{ paddingRight: 8 }}
+            >
+              {FILTERS.filter(f => !(isCompleted && f.key === 'todo')).map(
+                f => {
+                  const active = filter === f.key;
+                  return (
+                    <Pressable
+                      key={f.key}
+                      onPress={() => setFilter(f.key)}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: active }}
+                      className="flex-row items-center mr-2 px-3.5 py-2 rounded-full"
+                      style={{
+                        backgroundColor: active ? themeColor : '#fff',
+                        borderWidth: 1,
+                        borderColor: active ? themeColor : LINE,
+                      }}
+                    >
+                      <Text
+                        className="text-[13px] font-semibold"
+                        style={{ color: active ? '#fff' : INK }}
+                      >
+                        {f.label}
+                      </Text>
+                      <View
+                        className="ml-1.5 px-1.5 rounded-full"
+                        style={{
+                          backgroundColor: active
+                            ? 'rgba(255,255,255,0.25)'
+                            : '#F1F5F9',
+                        }}
+                      >
+                        <Text
+                          className="text-[11px] font-bold"
+                          style={{ color: active ? '#fff' : MUTED }}
+                        >
+                          {filterCounts[f.key]}
+                        </Text>
+                      </View>
+                    </Pressable>
+                  );
+                },
+              )}
+            </ScrollView>
           )}
 
           {allDocs.length === 0 && (
@@ -583,6 +832,28 @@ export const Documents = () => {
                 </View>
               </Panel>
             </Animated.View>
+          )}
+
+          {nothingMatches && (
+            <Panel>
+              <View className="items-center px-6 py-10">
+                <FileText color="#CBD5E1" size={36} />
+                <Text
+                  className="text-[14px] font-semibold mt-3"
+                  style={{ color: INK }}
+                >
+                  No documents match this filter
+                </Text>
+                <Pressable onPress={() => setFilter('all')} className="mt-2">
+                  <Text
+                    className="text-[13px] font-semibold"
+                    style={{ color: themeColor }}
+                  >
+                    Show all documents
+                  </Text>
+                </Pressable>
+              </View>
+            </Panel>
           )}
 
           {recurringDocs.map((doc, index) => {
@@ -624,10 +895,10 @@ export const Documents = () => {
                     </View>
 
                     {isUploading === doc.id ? (
-                      <UploadingIndicator />
+                      <UploadingIndicator themeColor={themeColor} />
                     ) : (
                       <Pressable
-                        onPress={() => handleUpload(doc.id)}
+                        onPress={() => handleUpload(doc.id, doc.title)}
                         disabled={isCompleted || doc.can_upload === false}
                         className="flex-row items-center px-4 py-2.5 rounded-xl"
                         style={{
@@ -654,6 +925,16 @@ export const Documents = () => {
                       </Pressable>
                     )}
                   </View>
+
+                  {doc.status === 'uploaded' && !isCompleted && (
+                    <View className="px-4 pb-3">
+                      <CancelSubmissionButton
+                        doc={doc}
+                        isCompleted={isCompleted}
+                        onPress={setCancelTarget}
+                      />
+                    </View>
+                  )}
 
                   {/* Submitted files summary + button that opens the full list */}
                   <View
@@ -712,10 +993,10 @@ export const Documents = () => {
                       {/* Right-side action. Rejected cards use the action row below. */}
                       {!isRejected &&
                         (isUploading === doc.id ? (
-                          <UploadingIndicator />
+                          <UploadingIndicator themeColor={themeColor} />
                         ) : doc.status === 'pending' ? (
                           <Pressable
-                            onPress={() => handleUpload(doc.id)}
+                            onPress={() => handleUpload(doc.id, doc.title)}
                             disabled={isCompleted}
                             className="flex-row items-center px-4 py-2.5 rounded-xl"
                             style={{
@@ -753,6 +1034,13 @@ export const Documents = () => {
                           </Pressable>
                         ))}
                     </View>
+
+                    {/* Under review: the intern can still take it back */}
+                    <CancelSubmissionButton
+                      doc={doc}
+                      isCompleted={isCompleted}
+                      onPress={setCancelTarget}
+                    />
 
                     {isRejected && (
                       <>
@@ -795,7 +1083,7 @@ export const Documents = () => {
                             </View>
                           ) : (
                             <Pressable
-                              onPress={() => handleUpload(doc.id)}
+                              onPress={() => handleUpload(doc.id, doc.title)}
                               disabled={isCompleted}
                               className="flex-1 flex-row items-center justify-center py-2.5 rounded-xl"
                               style={{
@@ -824,6 +1112,121 @@ export const Documents = () => {
           })}
         </View>
       </ScrollView>
+
+      {/* Preview before submitting */}
+      <Modal
+        visible={!!pendingUpload}
+        presentationStyle="pageSheet"
+        animationType="slide"
+        onRequestClose={discardPendingUpload}
+      >
+        <View className="flex-1 bg-white">
+          <View
+            className="flex-row items-center justify-between px-5 pt-12 pb-4 bg-white"
+            style={{ borderBottomWidth: 1, borderBottomColor: LINE }}
+          >
+            <View className="flex-1 pr-4">
+              <Text
+                className="text-[17px] font-bold"
+                style={{ color: INK }}
+                numberOfLines={1}
+              >
+                Review before submitting
+              </Text>
+              <Text
+                className="text-[12px] mt-0.5"
+                style={{ color: MUTED }}
+                numberOfLines={1}
+              >
+                {pendingUpload?.title}
+                {pendingUpload?.file.name
+                  ? ` · ${pendingUpload.file.name}`
+                  : ''}
+                {pendingUpload?.file.size
+                  ? ` · ${formatFileSize(pendingUpload.file.size)}`
+                  : ''}
+              </Text>
+            </View>
+            <Pressable
+              onPress={discardPendingUpload}
+              disabled={!!isUploading}
+              accessibilityLabel="Cancel upload"
+              className="h-10 w-10 items-center justify-center rounded-full"
+              style={{
+                backgroundColor: PAGE_BG,
+                opacity: isUploading ? 0.5 : 1,
+              }}
+            >
+              <X color="#475569" size={20} />
+            </Pressable>
+          </View>
+
+          <View className="flex-1" style={{ backgroundColor: PAGE_BG }}>
+            {pendingUpload && (
+              <Pdf
+                source={{ uri: pendingUpload.file.uri }}
+                style={styles.pdf}
+                onError={(error: any) => {
+                  console.log('PDF Error:', error);
+                  setUploadError(
+                    'This file could not be opened. Choose a different PDF.',
+                  );
+                }}
+              />
+            )}
+          </View>
+
+          <View
+            className="px-5 pt-4 pb-8 bg-white"
+            style={{ borderTopWidth: 1, borderTopColor: LINE }}
+          >
+            {uploadError && (
+              <Text
+                className="text-[13px] mb-3 leading-5"
+                style={{ color: '#B91C1C' }}
+              >
+                {uploadError}
+              </Text>
+            )}
+            <View className="flex-row gap-3">
+              <Pressable
+                onPress={discardPendingUpload}
+                disabled={!!isUploading}
+                className="flex-1 items-center justify-center py-3.5 rounded-2xl"
+                style={{
+                  borderWidth: 1,
+                  borderColor: LINE,
+                  opacity: isUploading ? 0.5 : 1,
+                }}
+              >
+                <Text className="font-bold text-[14px]" style={{ color: INK }}>
+                  Cancel
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={confirmUpload}
+                disabled={!!isUploading}
+                className="flex-1 flex-row items-center justify-center py-3.5 rounded-2xl"
+                style={{
+                  backgroundColor: themeColor,
+                  opacity: isUploading ? 0.7 : 1,
+                }}
+              >
+                {isUploading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <>
+                    <UploadCloud color="#fff" size={16} strokeWidth={2.25} />
+                    <Text className="ml-2 text-white font-bold text-[14px]">
+                      {uploadError ? 'Try again' : 'Submit'}
+                    </Text>
+                  </>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* PDF preview modal */}
       <Modal
@@ -1026,6 +1429,72 @@ export const Documents = () => {
                 })
               )}
             </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Confirm cancelling an under-review submission */}
+      <Modal
+        visible={!!cancelTarget}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => {
+          if (!cancelMutation.isPending) {
+            setCancelTarget(null);
+          }
+        }}
+      >
+        <View className="flex-1 bg-black/50 items-center justify-center px-6">
+          <View className="bg-white rounded-3xl p-6 w-full max-w-sm items-center">
+            <View
+              className="h-14 w-14 rounded-full items-center justify-center mb-4"
+              style={{ backgroundColor: '#FEE2E2' }}
+            >
+              <Trash2 color="#DC2626" size={26} strokeWidth={2.25} />
+            </View>
+            <Text
+              className="text-lg font-bold text-center mb-2"
+              style={{ color: INK }}
+            >
+              Cancel this submission?
+            </Text>
+            <Text
+              className="text-sm text-center mb-6 leading-5"
+              style={{ color: MUTED }}
+            >
+              {cancelTarget?.title} will be removed and will not be reviewed.
+              You can upload a new file afterwards.
+            </Text>
+            <View className="flex-row gap-3 w-full">
+              <Pressable
+                onPress={() => setCancelTarget(null)}
+                disabled={cancelMutation.isPending}
+                className="flex-1 py-3.5 rounded-2xl items-center"
+                style={{ borderWidth: 1, borderColor: LINE }}
+              >
+                <Text className="font-bold text-[14px]" style={{ color: INK }}>
+                  Keep it
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={confirmCancelSubmission}
+                disabled={cancelMutation.isPending}
+                className="flex-1 py-3.5 rounded-2xl items-center justify-center"
+                style={{
+                  backgroundColor: '#DC2626',
+                  opacity: cancelMutation.isPending ? 0.7 : 1,
+                }}
+              >
+                {cancelMutation.isPending ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text className="text-white font-bold text-[14px]">
+                    Remove file
+                  </Text>
+                )}
+              </Pressable>
+            </View>
           </View>
         </View>
       </Modal>

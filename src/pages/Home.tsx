@@ -77,6 +77,18 @@ function formatTimeDisplay(time24: string) {
   return `${hour12}:${minutes} ${period}`;
 }
 
+// "05:00 PM" or "17:00" -> "17:00"
+function to24h(value?: string | null) {
+  if (!value) return '';
+  const m = value.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+  if (!m) return '';
+  let h = parseInt(m[1], 10);
+  const mer = m[3]?.toUpperCase();
+  if (mer === 'PM' && h < 12) h += 12;
+  if (mer === 'AM' && h === 12) h = 0;
+  return `${String(h).padStart(2, '0')}:${m[2]}`;
+}
+
 async function requestLocationPermission(): Promise<boolean> {
   if (Platform.OS === 'android') {
     try {
@@ -202,14 +214,12 @@ export default function Home() {
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
   const [reqStartDate, setReqStartDate] = useState('');
   const [reqTimeIn, setReqTimeIn] = useState('');
-  const [reqTimeOut, setReqTimeOut] = useState('');
   const [reqHoursPerDay, setReqHoursPerDay] = useState('');
   const [reqDaysPerWeek, setReqDaysPerWeek] = useState('');
   const [reqReason, setReqReason] = useState('');
 
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimeInPicker, setShowTimeInPicker] = useState(false);
-  const [showTimeOutPicker, setShowTimeOutPicker] = useState(false);
 
   const onDateChange = (event: any, selectedDate?: Date) => {
     setShowDatePicker(Platform.OS === 'ios');
@@ -231,15 +241,6 @@ export default function Home() {
       setReqTimeIn(formatTime(selectedTime));
     } else if (event.type === 'dismissed') {
       setShowTimeInPicker(false);
-    }
-  };
-
-  const onTimeOutChange = (event: any, selectedTime?: Date) => {
-    setShowTimeOutPicker(Platform.OS === 'ios');
-    if (selectedTime && event.type === 'set') {
-      setReqTimeOut(formatTime(selectedTime));
-    } else if (event.type === 'dismissed') {
-      setShowTimeOutPicker(false);
     }
   };
 
@@ -374,6 +375,8 @@ export default function Home() {
     !isCompleted &&
     (placement_status === 'unassigned' || !company || !company.name);
   const percent = Math.min(100, Math.max(0, progress?.percent_complete ?? 0));
+  // The intern can't choose this. It always follows the company schedule.
+  const companyTimeOut = to24h(progress?.schedule?.time_out);
 
   const placementLabel = isCompleted
     ? 'Completed'
@@ -460,8 +463,26 @@ export default function Home() {
   const handleScheduleSubmit = async () => {
     if (isCompleted) return;
 
-    if (!reqStartDate.trim() || !reqTimeIn.trim() || !reqTimeOut.trim()) {
-      showToast('Please enter Start Date, Time In, and Time Out.', 'error');
+    if (!reqStartDate.trim() || !reqTimeIn.trim()) {
+      showToast('Please enter Start Date and Time In.', 'error');
+      return;
+    }
+
+    if (!companyTimeOut) {
+      showToast(
+        'Your company has no time out set yet, so you can’t request a schedule.',
+        'error',
+      );
+      return;
+    }
+
+    if (reqTimeIn >= companyTimeOut) {
+      showToast(
+        `Time In must be earlier than your company’s time out (${formatTimeDisplay(
+          companyTimeOut,
+        )}).`,
+        'error',
+      );
       return;
     }
 
@@ -469,7 +490,7 @@ export default function Home() {
       await requestSchedule({
         start_date: reqStartDate.trim(),
         time_in: reqTimeIn.trim(),
-        time_out: reqTimeOut.trim(),
+        time_out: companyTimeOut,
         hours_per_day: reqHoursPerDay ? parseFloat(reqHoursPerDay) : null,
         days_per_week: reqDaysPerWeek ? parseInt(reqDaysPerWeek, 10) : null,
         reason: reqReason.trim() || null,
@@ -478,7 +499,6 @@ export default function Home() {
       setIsScheduleModalOpen(false);
       setReqStartDate('');
       setReqTimeIn('');
-      setReqTimeOut('');
       setReqHoursPerDay('');
       setReqDaysPerWeek('');
       setReqReason('');
@@ -739,6 +759,16 @@ export default function Home() {
                 value={
                   progress?.schedule
                     ? `${progress.schedule.time_in} – ${progress.schedule.time_out} (${progress.schedule.hours_per_day} hrs)`
+                    : 'Not assigned'
+                }
+              />
+              <DetailRow
+                label="Break"
+                value={
+                  progress?.schedule
+                    ? progress.schedule.break_out && progress.schedule.break_in
+                      ? `${progress.schedule.break_out} – ${progress.schedule.break_in}`
+                      : 'No break'
                     : 'Not assigned'
                 }
               />
@@ -1032,33 +1062,18 @@ export default function Home() {
                   </View>
                   <View className="flex-1 ml-2">
                     <Text className="text-xs font-semibold text-slate-700 mb-1">
-                      Time Out*
+                      Time Out
                     </Text>
-                    <Pressable
-                      onPress={() => setShowTimeOutPicker(true)}
-                      className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3"
-                    >
-                      <Text
-                        className={
-                          reqTimeOut
-                            ? 'text-slate-800 text-sm'
-                            : 'text-[#94A3B8] text-sm'
-                        }
-                      >
-                        {reqTimeOut
-                          ? formatTimeDisplay(reqTimeOut)
-                          : 'Select time'}
+                    <View className="bg-slate-100 border border-slate-200 rounded-xl px-4 py-3">
+                      <Text className="text-slate-500 text-sm">
+                        {companyTimeOut
+                          ? formatTimeDisplay(companyTimeOut)
+                          : 'Not set'}
                       </Text>
-                    </Pressable>
-                    {showTimeOutPicker && (
-                      <DateTimePicker
-                        value={new Date()}
-                        mode="time"
-                        is24Hour
-                        display="default"
-                        onChange={onTimeOutChange}
-                      />
-                    )}
+                    </View>
+                    <Text className="text-[11px] text-slate-400 mt-1">
+                      Set by your company
+                    </Text>
                   </View>
                 </View>
                 <View className="mb-6">
@@ -1078,7 +1093,7 @@ export default function Home() {
 
                 <Pressable
                   onPress={handleScheduleSubmit}
-                  disabled={isSubmittingSchedule}
+                  disabled={isSubmittingSchedule || !companyTimeOut}
                   className="rounded-2xl py-3.5 items-center justify-center flex-row"
                   style={{
                     backgroundColor: themeColor,

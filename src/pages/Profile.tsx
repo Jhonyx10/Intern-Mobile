@@ -30,6 +30,8 @@ import { useInternProfile } from '../util/queries/profile';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../components/Navigation';
+import { useToast } from '../components/ToastProvider';
+import { getActiveShift, getOfflineShifts } from '../util/offlineShift';
 
 function initialsFrom(name?: string) {
   if (!name) return '?';
@@ -63,6 +65,7 @@ export default function Profile({
   const { data: profileData, isLoading: isProfileLoading } = useInternProfile();
   const { mutateAsync: logout, isPending } = useLogout();
   const navigation = useNavigation<NavigationProp>();
+  const { showToast } = useToast();
   const scrollY = useRef(new Animated.Value(0)).current;
 
   const headerScale = scrollY.interpolate({
@@ -76,6 +79,39 @@ export default function Profile({
     outputRange: [-50, 0],
     extrapolate: 'clamp',
   });
+
+  // Logging out clears this device's data, so never do it while an offline
+  // shift is still in progress or waiting to be uploaded.
+  const handleSignOut = async () => {
+    const [active, done] = await Promise.all([
+      getActiveShift(),
+      getOfflineShifts(),
+    ]);
+
+    if (active) {
+      showToast(
+        'You have an offline shift in progress. Time out first, then upload it from Reports before signing out.',
+        'error',
+        5000,
+      );
+      return;
+    }
+
+    if (done.length > 0) {
+      showToast(
+        `You have ${done.length} offline shift${
+          done.length > 1 ? 's' : ''
+        } not uploaded yet. Save ${
+          done.length > 1 ? 'them' : 'it'
+        } online from Reports before signing out.`,
+        'error',
+        5000,
+      );
+      return;
+    }
+
+    logout();
+  };
 
   if (isUserLoading || isProfileLoading) {
     return (
@@ -98,10 +134,28 @@ export default function Profile({
   const displayName = student?.full_name || user?.name || 'Student Intern';
 
   const details = [
-    { icon: Hash, label: 'Student Number', value: profileData?.student?.student_number || student?.student_number },
-    { icon: Mail, label: 'Email Address', value: profileData?.user?.email || user?.email, isEmail: true, verified: !!profileData?.user?.email_verified_at },
-    { icon: BookOpen, label: 'Course', value: profileData?.section?.course?.name || course?.course_name },
-    { icon: GraduationCap, label: 'Section', value: profileData?.section?.name || section?.name },
+    {
+      icon: Hash,
+      label: 'Student Number',
+      value: profileData?.student?.student_number || student?.student_number,
+    },
+    {
+      icon: Mail,
+      label: 'Email Address',
+      value: profileData?.user?.email || user?.email,
+      isEmail: true,
+      verified: !!profileData?.user?.email_verified_at,
+    },
+    {
+      icon: BookOpen,
+      label: 'Course',
+      value: profileData?.section?.course?.name || course?.course_name,
+    },
+    {
+      icon: GraduationCap,
+      label: 'Section',
+      value: profileData?.section?.name || section?.name,
+    },
   ];
 
   const menuItems = [
@@ -251,10 +305,11 @@ export default function Profile({
             return (
               <View
                 key={item.label}
-                className={`flex-row items-center px-4 py-4 ${index !== details.length - 1
-                  ? 'border-b border-slate-100'
-                  : ''
-                  }`}
+                className={`flex-row items-center px-4 py-4 ${
+                  index !== details.length - 1
+                    ? 'border-b border-slate-100'
+                    : ''
+                }`}
               >
                 <View
                   className="items-center justify-center rounded-full"
@@ -274,11 +329,16 @@ export default function Profile({
                     {item.isEmail && item.verified && (
                       <View className="flex-row items-center rounded-lg bg-emerald-50 px-2 py-0.5">
                         <CheckCircle2 color="#10B981" size={12} />
-                        <Text className="ml-1 text-[10px] font-bold text-emerald-600">Verified</Text>
+                        <Text className="ml-1 text-[10px] font-bold text-emerald-600">
+                          Verified
+                        </Text>
                       </View>
                     )}
                   </View>
-                  <Text className="text-[15px] font-semibold text-slate-900 mt-0.5" numberOfLines={1}>
+                  <Text
+                    className="text-[15px] font-semibold text-slate-900 mt-0.5"
+                    numberOfLines={1}
+                  >
                     {item.value || 'N/A'}
                   </Text>
                 </View>
@@ -310,20 +370,40 @@ export default function Profile({
             }}
           >
             {/* Company Info */}
-            <View className={`flex-row items-center px-4 py-4 ${profileData.placement.supervisor ? 'border-b border-slate-100' : ''}`}>
+            <View
+              className={`flex-row items-center px-4 py-4 ${
+                profileData.placement.supervisor
+                  ? 'border-b border-slate-100'
+                  : ''
+              }`}
+            >
               <View
                 className="items-center justify-center rounded-full"
-                style={{ width: 38, height: 38, backgroundColor: withAlpha(themeColor, '12') }}
+                style={{
+                  width: 38,
+                  height: 38,
+                  backgroundColor: withAlpha(themeColor, '12'),
+                }}
               >
                 <Building2 color={themeColor} size={18} strokeWidth={2.25} />
               </View>
               <View className="ml-3.5 flex-1">
-                <Text className="text-[11px] text-slate-400 font-medium">Company</Text>
-                <Text className="text-[15px] font-semibold text-slate-900 mt-0.5">{profileData.placement.company.name}</Text>
+                <Text className="text-[11px] text-slate-400 font-medium">
+                  Company
+                </Text>
+                <Text className="text-[15px] font-semibold text-slate-900 mt-0.5">
+                  {profileData.placement.company.name}
+                </Text>
                 {profileData.placement.company.address ? (
                   <View className="flex-row items-start mt-1 pr-4">
-                    <MapPin color="#94A3B8" size={12} style={{ marginTop: 2, flexShrink: 0 }} />
-                    <Text className="text-[11px] text-slate-500 ml-1 flex-1 leading-4">{profileData.placement.company.address}</Text>
+                    <MapPin
+                      color="#94A3B8"
+                      size={12}
+                      style={{ marginTop: 2, flexShrink: 0 }}
+                    />
+                    <Text className="text-[11px] text-slate-500 ml-1 flex-1 leading-4">
+                      {profileData.placement.company.address}
+                    </Text>
                   </View>
                 ) : null}
               </View>
@@ -334,14 +414,25 @@ export default function Profile({
               <View className="flex-row items-center px-4 py-4">
                 <View
                   className="items-center justify-center rounded-full"
-                  style={{ width: 38, height: 38, backgroundColor: withAlpha(themeColor, '12') }}
+                  style={{
+                    width: 38,
+                    height: 38,
+                    backgroundColor: withAlpha(themeColor, '12'),
+                  }}
                 >
                   <UserCircle color={themeColor} size={18} strokeWidth={2.25} />
                 </View>
                 <View className="ml-3.5 flex-1">
-                  <Text className="text-[11px] text-slate-400 font-medium">Supervisor</Text>
-                  <Text className="text-[15px] font-semibold text-slate-900 mt-0.5">{profileData.placement.supervisor.name}</Text>
-                  <Text className="text-[11px] text-slate-500 mt-0.5">{profileData.placement.supervisor.position_title || 'Supervisor'}</Text>
+                  <Text className="text-[11px] text-slate-400 font-medium">
+                    Supervisor
+                  </Text>
+                  <Text className="text-[15px] font-semibold text-slate-900 mt-0.5">
+                    {profileData.placement.supervisor.name}
+                  </Text>
+                  <Text className="text-[11px] text-slate-500 mt-0.5">
+                    {profileData.placement.supervisor.position_title ||
+                      'Supervisor'}
+                  </Text>
                 </View>
               </View>
             )}
@@ -376,10 +467,11 @@ export default function Profile({
               <Pressable
                 key={item.label}
                 onPress={item.onPress}
-                className={`flex-row items-center px-4 py-4 ${index !== menuItems.length - 1
-                  ? 'border-b border-slate-100'
-                  : ''
-                  }`}
+                className={`flex-row items-center px-4 py-4 ${
+                  index !== menuItems.length - 1
+                    ? 'border-b border-slate-100'
+                    : ''
+                }`}
               >
                 <View
                   className="items-center justify-center rounded-full"
@@ -412,10 +504,11 @@ export default function Profile({
         className="px-6"
       >
         <Pressable
-          onPress={() => logout()}
+          onPress={handleSignOut}
           disabled={isPending}
-          className={`flex-row items-center justify-center rounded-full py-4 mt-8 ${isPending ? 'opacity-60' : ''
-            }`}
+          className={`flex-row items-center justify-center rounded-full py-4 mt-8 ${
+            isPending ? 'opacity-60' : ''
+          }`}
           style={{
             backgroundColor: '#FEF2F2',
             borderWidth: 1.5,

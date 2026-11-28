@@ -78,9 +78,16 @@ export const useLogout = () => {
                 // Ignore API errors during logout (e.g. offline/network) to ensure user can clear local state
                 console.log('Backend logout error:', error);
             } finally {
-                // Remove local stored auth items
-                await AsyncStorage.removeItem('token');
-                await AsyncStorage.removeItem('user_data');
+                // Remove local stored auth items and cached API data, so the
+                // next user never sees this user's data.
+                // Offline shifts (@offline_*) are intentionally NOT cleared here:
+                // Profile blocks sign out while any are unuploaded.
+                await Promise.all([
+                    AsyncStorage.removeItem('token'),
+                    AsyncStorage.removeItem('user_data'),
+                    AsyncStorage.removeItem('@cached_dashboard'),
+                    AsyncStorage.removeItem('@cached_time_status'),
+                ]);
             }
         },
         onSuccess: () => {

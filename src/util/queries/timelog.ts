@@ -48,11 +48,13 @@ export interface TimeStatus {
     geofence: Geofence;
     lunch_break: LunchBreak;
     today_attendance: TodayAttendance;
+    placement_status?: 'active' | 'removed' | 'unassigned' | 'completed';
+    is_completed?: boolean;
 }
 
 interface TimePunchPayload {
     action: 'time_in' | 'time_out' | 'break_out' | 'break_in';
-    image?: string | null;           // Optional for break_in / break_out
+    image?: string | null;           // Required for time_in AND time_out (face check)
     latitude: number;
     longitude: number;
     location_accuracy_meters?: number;
@@ -88,6 +90,10 @@ export interface TimeLogEntry {
     task_photos_count: number;
     submitted_task_photos_count: number;
     task_photos: TimeLogTaskPhotoEntry[];
+    system_note?: string | null;
+    correction_reason?: string | null;
+    can_add_reason?: boolean;
+    face_review_status?: string | null;
 }
 
 interface TimeLogsPage {
@@ -104,20 +110,44 @@ export interface FileAbsencePayload {
 
 const TIME_LOGS_PER_PAGE = 20;
 
+export const TIME_STATUS_CACHE_KEY = '@cached_time_status';
+
 export const useTimeStatus = () => {
     return useQuery({
         queryKey: ['time_status'],
+        networkMode: 'always', // run the queryFn even when offline, so the cache fallback works
         queryFn: async () => {
-            const netState = await NetInfo.fetch();
-            if (!netState.isConnected) {
-                const cached = await AsyncStorage.getItem('@cached_time_status');
-                if (cached) return JSON.parse(cached) as TimeStatus;
+            const readCache = async (): Promise<TimeStatus | null> => {
+                try {
+                    const c = await AsyncStorage.getItem(TIME_STATUS_CACHE_KEY);
+                    return c ? (JSON.parse(c) as TimeStatus) : null;
+                } catch {
+                    return null;
+                }
+            };
+
+            const net = await NetInfo.fetch();
+            // Offline = no connection, OR connected to a network with no real internet
+            const offline = !net.isConnected || net.isInternetReachable === false;
+
+            if (offline) {
+                const cached = await readCache();
+                if (cached) return cached;
                 throw new Error('Offline and no cached data');
             }
 
-            const { data } = await api.get<TimeStatus>('/intern/time/status');
-            await AsyncStorage.setItem('@cached_time_status', JSON.stringify(data));
-            return data;
+            try {
+                const { data } = await api.get<TimeStatus>('/intern/time/status');
+                AsyncStorage.setItem(TIME_STATUS_CACHE_KEY, JSON.stringify(data)).catch(() => {});
+                return data;
+            } catch (e: any) {
+                // No response from the server: network failure, so fall back to the cache
+                if (!e?.response) {
+                    const cached = await readCache();
+                    if (cached) return cached;
+                }
+                throw e;
+            }
         },
     });
 };
@@ -126,9 +156,6 @@ export const useEnrollFace = () => {
     const queryClient = useQueryClient();
     return useMutation({
         mutationFn: async (payload: { image: string }) => {
-            // #region agent log
-            fetch('http://127.0.0.1:7585/ingest/ae4376a8-64c4-46b6-89b6-3628f95e1f3b', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '566d31' }, body: JSON.stringify({ sessionId: '566d31', runId: 'pre-fix', hypothesisId: 'E', location: 'timelog.ts:useEnrollFace', message: 'POST /intern/face/enrollment start', data: { uriPrefix: String(payload.image).slice(0, 40) }, timestamp: Date.now() }) }).catch(() => { });
-            // #endregion
             const formData = new FormData();
             formData.append('image', {
                 uri: payload.image,
@@ -136,22 +163,12 @@ export const useEnrollFace = () => {
                 type: 'image/jpeg',
             } as any);
 
-            try {
-                const { data } = await api.post('/intern/face/enrollment', formData, {
-                    headers: {
-                        'Content-Type': 'multipart/form-data',
-                    },
-                });
-                // #region agent log
-                fetch('http://127.0.0.1:7585/ingest/ae4376a8-64c4-46b6-89b6-3628f95e1f3b', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '566d31' }, body: JSON.stringify({ sessionId: '566d31', runId: 'pre-fix', hypothesisId: 'E', location: 'timelog.ts:useEnrollFace', message: 'POST enrollment OK', data: { keys: data && typeof data === 'object' ? Object.keys(data) : typeof data }, timestamp: Date.now() }) }).catch(() => { });
-                // #endregion
-                return data;
-            } catch (err: any) {
-                // #region agent log
-                fetch('http://127.0.0.1:7585/ingest/ae4376a8-64c4-46b6-89b6-3628f95e1f3b', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '566d31' }, body: JSON.stringify({ sessionId: '566d31', runId: 'pre-fix', hypothesisId: 'E', location: 'timelog.ts:useEnrollFace', message: 'POST enrollment error', data: { status: err?.response?.status ?? null, apiMessage: err?.response?.data?.message ?? err?.message ?? String(err) }, timestamp: Date.now() }) }).catch(() => { });
-                // #endregion
-                throw err;
-            }
+            const { data } = await api.post('/intern/face/enrollment', formData, {
+                headers: {
+                    'Content-Type': 'multipart/form-data',
+                },
+            });
+            return data;
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['time_status'] });
@@ -164,6 +181,11 @@ export const useTimePunch = () => {
 
     return useMutation({
         mutationFn: async (payload: TimePunchPayload) => {
+            // The server runs a face check on time in and time out, so both need a photo
+            if ((payload.action === 'time_in' || payload.action === 'time_out') && !payload.image) {
+                throw new Error('A face photo is required to time in or time out.');
+            }
+
             const formData = new FormData();
 
             // Append required fields
@@ -184,7 +206,7 @@ export const useTimePunch = () => {
                 formData.append('task_note', payload.task_note);
             }
 
-            // Append image ONLY if it exists (required for time_in/time_out, skipped for breaks)
+            // Photo for time_in and time_out; break_out / break_in send none
             if (payload.image) {
                 formData.append('image', {
                     uri: payload.image,

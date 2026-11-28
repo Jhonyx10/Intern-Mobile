@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Text,
   View,
@@ -13,10 +13,10 @@ import {
   CheckCircle2,
   AlertCircle,
   CalendarX,
-  Coffee,
   LogIn,
   LogOut,
   Sunrise,
+  Sun,
   FileText,
 } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
@@ -41,7 +41,6 @@ import {
   getPunchPhase,
   isPointInPolygon,
   PunchPhase,
-  PUNCH_META,
 } from '../util/timeLogHelpers';
 import {
   useOfflineShifts,
@@ -92,6 +91,12 @@ function timeTodayFrom(value?: string | null): Date | null {
   return d;
 }
 
+// True while the current time is still before the given scheduled time today
+function isBeforeScheduled(value?: string | null): boolean {
+  const at = timeTodayFrom(value);
+  return at ? Date.now() < at.getTime() : false;
+}
+
 const MISSED_SHIFT_MESSAGE = 'Shift ended. You did not time in today.';
 
 export default function TimeLogs() {
@@ -103,17 +108,20 @@ export default function TimeLogs() {
   const { data: userData } = useUser();
   const { mutateAsync: timePunch, isPending: isPunching } = useTimePunch();
   const themeColor = userData?.settings?.theme_color || '#1D4ED8';
-  // Only the morning time in needs the camera. Time out is automatic.
-  const [cameraMode, setCameraMode] = useState<'punch_in' | null>(null);
+  // Time in and time out both use the camera (face check). Breaks do not.
+  const [cameraMode, setCameraMode] = useState<'punch_in' | 'punch_out' | null>(
+    null,
+  );
+  const lastCameraMode = useRef<'punch_in' | 'punch_out'>('punch_in');
   const [taskNoteModalVisible, setTaskNoteModalVisible] = useState(false);
   const [confirmBreakAction, setConfirmBreakAction] = useState<
     'break_out' | 'break_in' | null
   >(null);
   const [absenceModalVisible, setAbsenceModalVisible] = useState(false);
   // Drives the "Verifying your face..." overlay shown after the camera closes
-  const [verifyingAction, setVerifyingAction] = useState<'time_in' | null>(
-    null,
-  );
+  const [verifyingAction, setVerifyingAction] = useState<
+    'time_in' | 'time_out' | null
+  >(null);
 
   // Ticking clock. Also refreshes when the app comes back to the foreground,
   // because JS timers can pause while the app is in the background.
@@ -139,10 +147,14 @@ export default function TimeLogs() {
   const { userLocation, locationError, setUserLocation } =
     useLiveLocation(isClockedIn);
 
+  // Offline = no connection, OR connected to a network with no real internet.
+  // isInternetReachable is null until NetInfo's first check, so null counts as online.
   const [isOnline, setIsOnline] = useState(true);
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener(state => {
-      setIsOnline(Boolean(state.isConnected));
+      setIsOnline(
+        state.isConnected !== false && state.isInternetReachable !== false,
+      );
     });
     return () => unsubscribe();
   }, []);
@@ -174,6 +186,7 @@ export default function TimeLogs() {
   const geofencePolygon = dashboard?.company?.geofence_polygon;
   const polygonCoords = geofencePolygon?.coordinates?.[0];
   const isGeofenceActive = !!polygonCoords;
+  // Offline: Mapbox can't give a location, so the geofence check is skipped
   const isInGeofence =
     !isOnline ||
     (isGeofenceActive && userLocation
@@ -186,6 +199,7 @@ export default function TimeLogs() {
   };
 
   // Records the punch on this device. Nothing is sent to the server.
+  // The face check for time in / time out runs when the shift is uploaded.
   const handleOfflinePunch = async (
     action: 'time_in' | 'time_out' | 'break_out' | 'break_in',
     imageUri: string | null,
@@ -197,7 +211,7 @@ export default function TimeLogs() {
       } else if (action === 'break_out' || action === 'break_in') {
         await recordOfflineBreak(action, timestamp);
       } else {
-        await finishOfflineShift({ timestamp });
+        await finishOfflineShift({ timestamp, image: imageUri });
       }
       showToast(
         action === 'time_out'
@@ -222,6 +236,13 @@ export default function TimeLogs() {
       return;
     }
 
+    // Time in and time out must come with a face photo
+    if ((action === 'time_in' || action === 'time_out') && !imageUri) {
+      closeModals();
+      showToast('A face photo is required.', 'error');
+      return;
+    }
+
     // Covers both the online and offline paths, even if the button state is stale
     if (action === 'time_in' && getMissedShift()) {
       closeModals();
@@ -229,11 +250,27 @@ export default function TimeLogs() {
       return;
     }
 
+    const sched = dashboard?.progress?.schedule;
+
+    if (action === 'break_out' && isBeforeScheduled(sched?.break_out)) {
+      closeModals();
+      showToast(`Time out for break opens at ${sched?.break_out}.`, 'error');
+      return;
+    }
+
+    if (action === 'time_out' && isBeforeScheduled(sched?.time_out)) {
+      closeModals();
+      showToast(`Time out opens at ${sched?.time_out}.`, 'error');
+      return;
+    }
+
     const timestamp = new Date().toISOString();
     const net = await NetInfo.fetch();
+    // No connection, or connected with no real internet (e.g. Wi-Fi without data)
+    const offline = !net.isConnected || net.isInternetReachable === false;
     const local = await getActiveShift(); // a shift started offline stays offline until time out
 
-    if (!net.isConnected || local) {
+    if (offline || local) {
       if (!local && action !== 'time_in') {
         closeModals();
         showToast(
@@ -264,6 +301,7 @@ export default function TimeLogs() {
             'That action could not be completed. Please check the details and try again.',
           'error',
         );
+        // Face mismatch / auto-closed shift: refresh so the screen matches the server
         if (action === 'time_out' && e.response.status === 422) refetch();
         return;
       }
@@ -280,13 +318,13 @@ export default function TimeLogs() {
   const handleActionPress = (
     action: 'break_out' | 'break_in' | 'punch_out',
   ) => {
-    // Final time out: no face check. Outside the geofence it still asks for a
-    // task note first, then times out automatically.
+    // Final time out: face check. Outside the geofence it asks for a task
+    // note first, then opens the camera.
     if (action === 'punch_out') {
       if (!isInGeofence) {
         setTaskNoteModalVisible(true);
       } else {
-        handlePunch(null, 'time_out');
+        setCameraMode('punch_out');
       }
       return;
     }
@@ -298,18 +336,26 @@ export default function TimeLogs() {
     handlePunch(null, action);
   };
 
-  // Only the morning time in uses the camera
-  const onCameraCapture = async (imageUri: string) => {
-    if (cameraMode !== 'punch_in') return;
+  // Time in and time out both use the camera.
+  // Closes the camera right away, then runs the punch once the modal has
+  // finished dismissing (iOS can't present the verifying overlay while the
+  // camera modal is still animating out).
+  const onCameraCapture = (imageUri: string) => {
+    if (!cameraMode) return;
 
-    setCameraMode(null);
-    setVerifyingAction('time_in');
+    const action = cameraMode === 'punch_in' ? 'time_in' : 'time_out';
 
-    try {
-      await handlePunch(imageUri, 'time_in');
-    } finally {
-      setVerifyingAction(null);
-    }
+    setCameraMode(null); // auto-close the camera
+
+    // Wait for the camera modal to finish dismissing before showing the overlay
+    setTimeout(async () => {
+      setVerifyingAction(action);
+      try {
+        await handlePunch(imageUri, action);
+      } finally {
+        setVerifyingAction(null);
+      }
+    }, 100);
   };
 
   // Only block the screen when there is no data at all (cached data still renders)
@@ -363,6 +409,15 @@ export default function TimeLogs() {
   const schedule = dashboard?.progress?.schedule;
   const isScheduleSet = Boolean(schedule?.time_in && schedule?.time_out);
 
+  const breakOutAt = timeTodayFrom(schedule?.break_out);
+  const timeOutAt = timeTodayFrom(schedule?.time_out);
+
+  // Uses the ticking `now` so the button unlocks without leaving the screen
+  const breakOutTooEarly =
+    Boolean(breakOutAt) && now.getTime() < breakOutAt!.getTime();
+  const timeOutTooEarly =
+    Boolean(timeOutAt) && now.getTime() < timeOutAt!.getTime();
+
   let isInternshipStarted = true;
   if (schedule?.start_date) {
     const startNow = new Date();
@@ -399,34 +454,38 @@ export default function TimeLogs() {
       color: themeColor,
     },
     break_out: {
-      label: PUNCH_META.break_out.label, // "Time Out"
-      period: PUNCH_META.break_out.period, // "morning"
-      icon: Coffee,
-      disabled: false,
-      hint: !isInGeofence
+      label: 'Time Out',
+      period: 'morning',
+      icon: Sunrise, // morning indicator
+      disabled: breakOutTooEarly,
+      hint: breakOutTooEarly
+        ? `Opens at ${schedule?.break_out}`
+        : !isInGeofence
         ? 'Fieldwork mode (Time out allowed)'
-        : 'Tap to time out',
+        : 'Tap to time out (morning)',
       onPress: () => handleActionPress('break_out'),
       color: '#F59E0B',
     },
     break_in: {
-      label: PUNCH_META.break_in.label, // "Time In"
-      period: PUNCH_META.break_in.period, // "afternoon"
-      icon: Sunrise,
+      label: 'Time In',
+      period: 'afternoon',
+      icon: Sun, // afternoon indicator
       disabled: false,
       hint: !isInGeofence
         ? 'Fieldwork mode (Time in allowed)'
-        : 'Tap to resume work',
+        : 'Tap to time in (afternoon)',
       onPress: () => handleActionPress('break_in'),
       color: '#10B981',
     },
     punch_out: {
       label: 'Time Out',
       icon: LogOut,
-      disabled: false,
-      hint: !isInGeofence
-        ? 'Fieldwork mode (Note required)'
-        : 'Tap to time out',
+      disabled: timeOutTooEarly,
+      hint: timeOutTooEarly
+        ? `Opens at ${schedule?.time_out}`
+        : !isInGeofence
+        ? 'Fieldwork mode (Note + face check required)'
+        : 'Tap to time out (face check)',
       onPress: () => handleActionPress('punch_out'),
       color: '#EF4444',
     },
@@ -549,6 +608,10 @@ export default function TimeLogs() {
     setAbsenceModalVisible(true);
   };
 
+  if (cameraMode) lastCameraMode.current = cameraMode;
+  const isTimeOutCamera =
+    (cameraMode ?? lastCameraMode.current) === 'punch_out';
+
   return (
     <>
       <ScrollView
@@ -621,8 +684,9 @@ export default function TimeLogs() {
                     style={{ color: INK }}
                   >
                     Offline shift in progress. It is saved on this device and
-                    can be uploaded from Reports after you time out. If you
-                    forget, it closes at your scheduled time out.
+                    can be uploaded from Reports after you time out. Your face
+                    is checked when it uploads. If you forget to time out, it
+                    closes at your scheduled time out.
                   </Text>
                 </View>
               </Panel>
@@ -885,9 +949,9 @@ export default function TimeLogs() {
         visible={!isLocked && taskNoteModalVisible}
         onClose={() => setTaskNoteModalVisible(false)}
         onProceed={() => {
-          // No camera on time out: record it right after the note prompt
+          // After the note prompt, open the camera for the time out face check
           setTaskNoteModalVisible(false);
-          handlePunch(null, 'time_out');
+          setCameraMode('punch_out');
         }}
         themeColor={themeColor}
       />
@@ -898,8 +962,14 @@ export default function TimeLogs() {
         onEnroll={onCameraCapture}
         isEnrolling={isPunching}
         themeColor={themeColor}
-        title="Punch In — Face Verification"
-        captureLabel="Confirm Punch In"
+        title={
+          isTimeOutCamera
+            ? 'Punch Out — Face Verification'
+            : 'Punch In — Face Verification'
+        }
+        captureLabel={
+          isTimeOutCamera ? 'Confirm Punch Out' : 'Confirm Punch In'
+        }
       />
 
       <ConfirmModal
@@ -922,7 +992,7 @@ export default function TimeLogs() {
         themeColor={themeColor}
       />
 
-      {/* Verifying overlay (time in only) */}
+      {/* Verifying overlay (time in and time out) */}
       <Modal
         visible={verifyingAction !== null}
         transparent
@@ -943,7 +1013,9 @@ export default function TimeLogs() {
               className="text-[13px] mt-1.5 text-center"
               style={{ color: MUTED }}
             >
-              Recording your time in
+              {verifyingAction === 'time_out'
+                ? 'Recording your time out'
+                : 'Recording your time in'}
             </Text>
           </View>
         </View>

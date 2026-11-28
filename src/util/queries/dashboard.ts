@@ -1,4 +1,6 @@
 import { useQuery, useMutation } from '@tanstack/react-query';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import NetInfo from '@react-native-community/netinfo';
 import { api } from '../api';
 
 interface DashboardSchedule {
@@ -6,6 +8,9 @@ interface DashboardSchedule {
     days_per_week: number;
     time_in: string;
     time_out: string;
+    // Company-wide break. Optional: a dashboard cached before this change won't have them.
+    break_out?: string | null;
+    break_in?: string | null;
     start_date: string;
     source?: 'approved_ojt_schedule' | 'company_schedule';
 }
@@ -62,12 +67,43 @@ export interface CompanyRequestPayload {
     longitude?: number | null;
 }
 
+export const DASHBOARD_CACHE_KEY = '@cached_dashboard';
+
 export const useDashboard = () => {
     return useQuery({
         queryKey: ['dashboard'],
+        networkMode: 'always', // run the queryFn even when offline, so the cache fallback works
         queryFn: async () => {
-            const { data } = await api.get<DashboardData>('/intern/progress');
-            return data;
+            const readCache = async (): Promise<DashboardData | null> => {
+                try {
+                    const c = await AsyncStorage.getItem(DASHBOARD_CACHE_KEY);
+                    return c ? (JSON.parse(c) as DashboardData) : null;
+                } catch {
+                    return null;
+                }
+            };
+
+            const net = await NetInfo.fetch();
+            const offline = !net.isConnected || net.isInternetReachable === false;
+
+            if (offline) {
+                const cached = await readCache();
+                if (cached) return cached;
+                throw new Error('Offline and no cached data');
+            }
+
+            try {
+                const { data } = await api.get<DashboardData>('/intern/progress');
+                AsyncStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify(data)).catch(() => {});
+                return data;
+            } catch (e: any) {
+                // No response from the server: network failure, so fall back to the cache
+                if (!e?.response) {
+                    const cached = await readCache();
+                    if (cached) return cached;
+                }
+                throw e;
+            }
         },
     });
 };
